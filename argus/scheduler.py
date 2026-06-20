@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from argus.models import IngestResult
@@ -19,8 +19,10 @@ class PollJob:
     name: str
     interval_seconds: int
     handler: IngestJob
+    initial_delay_seconds: int = 0
     last_started: datetime | None = None
     last_finished: datetime | None = None
+    next_run_at: datetime | None = None
     last_result: str | None = None
     last_error: str | None = None
     running: bool = False
@@ -42,6 +44,10 @@ class PollScheduler:
         if not self.enabled:
             return
         self.stop_event.clear()
+        startup_delay = startup_delay_seconds()
+        stagger = scheduler_stagger_seconds()
+        for index, job in enumerate(self.jobs.values()):
+            job.initial_delay_seconds = startup_delay + (index * stagger)
         self.tasks = [
             asyncio.create_task(self._run_loop(job), name=f"poll:{job.id}")
             for job in self.jobs.values()
@@ -71,6 +77,7 @@ class PollScheduler:
                 "failures": job.failures,
                 "last_started": job.last_started,
                 "last_finished": job.last_finished,
+                "next_run_at": job.next_run_at,
                 "last_result": job.last_result,
                 "last_error": job.last_error,
             }
@@ -78,10 +85,11 @@ class PollScheduler:
         ]
 
     async def _run_loop(self, job: PollJob) -> None:
-        await self._sleep_or_stop(startup_delay_seconds())
+        await self._sleep_until_next_run(job, job.initial_delay_seconds)
         while not self.stop_event.is_set():
+            job.next_run_at = None
             await self._run_job(job)
-            await self._sleep_or_stop(job.interval_seconds)
+            await self._sleep_until_next_run(job, job.interval_seconds)
 
     async def _run_job(self, job: PollJob) -> IngestResult:
         if job.running:
@@ -116,6 +124,10 @@ class PollScheduler:
         except TimeoutError:
             return
 
+    async def _sleep_until_next_run(self, job: PollJob, seconds: int) -> None:
+        job.next_run_at = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+        await self._sleep_or_stop(seconds)
+
 
 def env_bool(name: str, default: bool) -> bool:
     value = os.getenv(name)
@@ -133,3 +145,7 @@ def env_int(name: str, default: int) -> int:
 
 def startup_delay_seconds() -> int:
     return max(0, env_int("ARGUS_SCHEDULER_STARTUP_DELAY_SECONDS", 15))
+
+
+def scheduler_stagger_seconds() -> int:
+    return max(0, env_int("ARGUS_SCHEDULER_STAGGER_SECONDS", 30))

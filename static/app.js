@@ -10,6 +10,7 @@ import {
 import {
   renderSources as renderSourcesPanel,
   renderSourceSyncTargets as renderSyncTargets,
+  updateSourceCountdowns,
 } from "./js/sources-panel.js";
 import { stationDetailHtml, stationDetailLoadingHtml } from "./js/station-detail.js";
 import {
@@ -82,6 +83,8 @@ let knownLayerCategories = new Set();
 let knownLayerSources = new Set();
 let enabledLayerCategories = new Set();
 let enabledLayerSources = new Set();
+let sourceRefreshTimer = null;
+let sourceCountdownTimer = null;
 
 const settingsElements = {
   publicBaseUrl,
@@ -543,6 +546,24 @@ async function loadSources() {
   }
 }
 
+async function refreshSchedulerJobs() {
+  if (activeView !== "sources") {
+    return;
+  }
+  try {
+    const response = await fetch("api/scheduler/jobs");
+    if (!response.ok) {
+      throw new Error(`Scheduler API responded with ${response.status}`);
+    }
+    schedulerJobs = await response.json();
+    renderSourceSyncTargets();
+    renderSources();
+  } catch (error) {
+    sourceNote.textContent = error.message;
+    sourceNote.classList.add("error");
+  }
+}
+
 async function loadObservations() {
   try {
     const response = await fetch("api/observations?source_id=dmi-metobs&limit=2000");
@@ -675,6 +696,7 @@ function renderReports() {
 
 function renderSources() {
   renderSourcesPanel(sources, schedulerJobs, sourceElements);
+  updateSourceCountdowns(sourceList);
 }
 
 function renderSourceSyncTargets() {
@@ -706,6 +728,15 @@ function setView(viewName) {
   } else {
     renderMap(mapLayerEvents(currentMapBaseEvents()));
   }
+}
+
+function startSourceTimers() {
+  sourceCountdownTimer = window.setInterval(() => {
+    if (activeView === "sources") {
+      updateSourceCountdowns(sourceList);
+    }
+  }, 1000);
+  sourceRefreshTimer = window.setInterval(refreshSchedulerJobs, 30000);
 }
 
 categoryFilter.addEventListener("change", render);
@@ -826,6 +857,7 @@ function setMenuOpen(isOpen) {
 }
 
 setMenuOpen(false);
+startSourceTimers();
 loadEvents();
 loadSources();
 setInterval(loadEvents, 60000);

@@ -127,5 +127,6 @@ class SchedulerJobStatus(BaseModel):
     failures: int
     last_started: datetime | None = None
     last_finished: datetime | None = None
+    next_run_at: datetime | None = None
     last_result: str | None = None
     last_error: str | None = None

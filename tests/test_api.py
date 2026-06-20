@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import asyncio
 import json
 from urllib.parse import quote
 
@@ -32,6 +33,8 @@ from argus.main import (
 )
 from argus.models import AppSettingsUpdate, EventCreate
 from argus.repository import insert_raw_article
+from argus.scheduler import PollJob, PollScheduler
+from argus.models import IngestResult
 
 
 def test_health(tmp_path, monkeypatch):
@@ -220,6 +223,43 @@ def test_scheduler_jobs_are_returned():
     assert job_intervals["police-ritzau-short-messages"] == 600
     assert job_intervals["trafikinfo-events"] == 600
     assert "health-alerts" in job_intervals
+
+
+def test_scheduler_staggers_initial_next_runs(monkeypatch):
+    monkeypatch.setenv("ARGUS_SCHEDULER_STARTUP_DELAY_SECONDS", "60")
+    monkeypatch.setenv("ARGUS_SCHEDULER_STAGGER_SECONDS", "7")
+
+    def handler() -> IngestResult:
+        return IngestResult(
+            source_id="test-source",
+            observations_seen=0,
+            observations_stored=0,
+            events_created=0,
+            events_updated=0,
+            message="ok",
+        )
+
+    async def run_scheduler() -> list[object]:
+        scheduler = PollScheduler(enabled=True)
+        scheduler.register(PollJob("a", "source-a", "Source A", 600, handler))
+        scheduler.register(PollJob("b", "source-b", "Source B", 600, handler))
+        scheduler.register(PollJob("c", "source-c", "Source C", 600, handler))
+        scheduler.start()
+        await asyncio.sleep(0)
+        snapshot = scheduler.snapshot()
+        await scheduler.stop()
+        return snapshot
+
+    snapshot = asyncio.run(run_scheduler())
+    first = snapshot[0]["next_run_at"]
+    second = snapshot[1]["next_run_at"]
+    third = snapshot[2]["next_run_at"]
+
+    assert first is not None
+    assert second is not None
+    assert third is not None
+    assert round((second - first).total_seconds()) == 7
+    assert round((third - second).total_seconds()) == 7
 
 
 def test_health_sync_creates_health_event(tmp_path, monkeypatch):

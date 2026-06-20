@@ -45,6 +45,15 @@ export function renderSourceSyncTargets(schedulerJobs, elements) {
   elements.button.disabled = schedulerJobs.length === 0;
 }
 
+export function updateSourceCountdowns(root = document) {
+  root.querySelectorAll("[data-next-run-at]").forEach((element) => {
+    const nextRunAt = element.dataset.nextRunAt;
+    const running = element.dataset.running === "true";
+    const enabled = element.dataset.enabled === "true";
+    element.textContent = countdownLabel(nextRunAt, { running, enabled });
+  });
+}
+
 function filteredSources(sources, filter) {
   return filter === "all" ? sources : sources.filter((source) => source.status === filter);
 }
@@ -76,6 +85,12 @@ function sourceCard(source, job) {
           <dd>${job ? `${job.enabled ? "Enabled" : "Disabled"} / ${job.interval_seconds}s` : "Not scheduled"}</dd>
         </div>
         <div>
+          <dt>Next poll</dt>
+          <dd>
+            ${job ? countdownElement(job) : "Not scheduled"}
+          </dd>
+        </div>
+        <div>
           <dt>Last check</dt>
           <dd>${source.last_check ? formatDate(source.last_check) : "Never"}</dd>
         </div>
@@ -94,4 +109,49 @@ function sourceCard(source, job) {
       </dl>
     </article>
   `;
+}
+
+function countdownElement(job) {
+  return `
+    <span
+      data-next-run-at="${escapeHtml(job.next_run_at || "")}"
+      data-running="${job.running ? "true" : "false"}"
+      data-enabled="${job.enabled ? "true" : "false"}"
+    >
+      ${escapeHtml(countdownLabel(job.next_run_at, { running: job.running, enabled: job.enabled }))}
+    </span>
+  `;
+}
+
+function countdownLabel(nextRunAt, { running, enabled }) {
+  if (running) {
+    return "Running now";
+  }
+  if (!enabled) {
+    return "Scheduler disabled";
+  }
+  if (!nextRunAt) {
+    return "Calculating";
+  }
+
+  const remainingMs = new Date(nextRunAt).getTime() - Date.now();
+  if (!Number.isFinite(remainingMs)) {
+    return "Calculating";
+  }
+  if (remainingMs <= 0) {
+    return "Due now";
+  }
+
+  const totalSeconds = Math.ceil(remainingMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes >= 60) {
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    return `${hours}h ${remainingMinutes}m`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+  }
+  return `${seconds}s`;
 }
