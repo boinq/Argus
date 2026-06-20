@@ -57,9 +57,17 @@ def test_settings_can_be_updated(tmp_path, monkeypatch):
             path_prefix="/argus",
             trusted_hosts="argus.example.dk,localhost",
             proxy_headers=True,
+            ntfy_enabled=True,
+            ntfy_server_url="https://ntfy.example.dk",
+            ntfy_topic="argus-alerts",
+            ntfy_token="secret-token",
+            ntfy_priority="high",
         )
     )
 
     assert settings.public_base_url == "https://argus.example.dk"
     assert settings.path_prefix == "/argus"
+    assert settings.ntfy_enabled is True
+    assert settings.ntfy_topic == "argus-alerts"
+    assert settings.ntfy_priority == "high"
     assert api_get_settings().trusted_hosts == "argus.example.dk,localhost"

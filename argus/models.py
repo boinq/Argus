@@ -51,6 +51,11 @@ class AppSettings(BaseModel):
     path_prefix: str = Field(default="", max_length=80)
     trusted_hosts: str = Field(default="*", max_length=500)
     proxy_headers: bool = True
+    ntfy_enabled: bool = False
+    ntfy_server_url: str = Field(default="https://ntfy.sh", max_length=240)
+    ntfy_topic: str = Field(default="", max_length=120)
+    ntfy_token: str = Field(default="", max_length=500)
+    ntfy_priority: str = Field(default="default", max_length=20)
 
 
 class AppSettingsUpdate(BaseModel):
@@ -58,3 +63,8 @@ class AppSettingsUpdate(BaseModel):
     path_prefix: str | None = Field(default=None, max_length=80)
     trusted_hosts: str | None = Field(default=None, max_length=500)
     proxy_headers: bool | None = None
+    ntfy_enabled: bool | None = None
+    ntfy_server_url: str | None = Field(default=None, max_length=240)
+    ntfy_topic: str | None = Field(default=None, max_length=120)
+    ntfy_token: str | None = Field(default=None, max_length=500)
+    ntfy_priority: str | None = Field(default=None, max_length=20)

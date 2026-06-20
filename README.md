@@ -39,6 +39,11 @@ ARGUS_ROOT_PATH=/argus
 ARGUS_TRUSTED_HOSTS=argus.example.dk,localhost
 ARGUS_PROXY_HEADERS=true
 ARGUS_FORWARDED_ALLOW_IPS=10.0.0.0/8
+ARGUS_NTFY_ENABLED=true
+ARGUS_NTFY_SERVER_URL=https://ntfy.sh
+ARGUS_NTFY_TOPIC=argus-alerts
+ARGUS_NTFY_TOKEN=optional-token
+ARGUS_NTFY_PRIORITY=high
 ```
 
 The Docker image starts Uvicorn through `python -m argus.server`, which reads
@@ -48,6 +53,9 @@ forward requests to the app and preserve or strip the prefix consistently with
 
 The in-app Settings page stores these values in SQLite for operators, but
 changes to runtime proxy behavior require restarting the container.
+
+NTFY settings are configuration-only at this stage. Alert delivery will use
+these values once notification dispatch is added.
 
 ## API
 

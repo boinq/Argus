@@ -67,6 +67,11 @@ def seed_settings(connection: sqlite3.Connection) -> None:
         "path_prefix": os.getenv("ARGUS_ROOT_PATH", ""),
         "trusted_hosts": os.getenv("ARGUS_TRUSTED_HOSTS", "*"),
         "proxy_headers": os.getenv("ARGUS_PROXY_HEADERS", "true"),
+        "ntfy_enabled": os.getenv("ARGUS_NTFY_ENABLED", "false"),
+        "ntfy_server_url": os.getenv("ARGUS_NTFY_SERVER_URL", "https://ntfy.sh"),
+        "ntfy_topic": os.getenv("ARGUS_NTFY_TOPIC", ""),
+        "ntfy_token": os.getenv("ARGUS_NTFY_TOKEN", ""),
+        "ntfy_priority": os.getenv("ARGUS_NTFY_PRIORITY", "default"),
     }
     connection.executemany(
         "INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)",

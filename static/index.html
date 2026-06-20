@@ -36,8 +36,8 @@
           <button type="button" class="menu-item active" data-view="events">Map</button>
           <button type="button" class="menu-item">Sensors</button>
           <button type="button" class="menu-item">Alerts</button>
-          <button type="button" class="menu-item">Sources</button>
-          <button type="button" class="menu-item">Reports</button>
+          <button type="button" class="menu-item" data-view="sources">Sources</button>
+          <button type="button" class="menu-item" data-view="reports">Reports</button>
           <button type="button" class="menu-item" data-view="settings">Settings</button>
         </nav>
         <div class="menu-scrim" id="menu-scrim" hidden></div>
@@ -87,6 +87,8 @@
             <button type="submit" class="save-button" form="settings-form">Save</button>
           </div>
           <form class="settings-form" id="settings-form">
+            <div class="settings-group">
+              <h3>Proxy</h3>
             <label>
               <span>Public URL</span>
               <input
@@ -113,11 +115,110 @@
               <input id="proxy-headers" name="proxy_headers" type="checkbox" />
               <span>Trust forwarded proxy headers</span>
             </label>
+            </div>
+
+            <div class="settings-group">
+              <h3>NTFY</h3>
+              <label class="checkbox-row">
+                <input id="ntfy-enabled" name="ntfy_enabled" type="checkbox" />
+                <span>Enable NTFY notifications</span>
+              </label>
+              <label>
+                <span>Server URL</span>
+                <input
+                  id="ntfy-server-url"
+                  name="ntfy_server_url"
+                  type="url"
+                  placeholder="https://ntfy.sh"
+                />
+              </label>
+              <label>
+                <span>Topic</span>
+                <input id="ntfy-topic" name="ntfy_topic" type="text" placeholder="argus-alerts" />
+              </label>
+              <label>
+                <span>Access token</span>
+                <input
+                  id="ntfy-token"
+                  name="ntfy_token"
+                  type="password"
+                  autocomplete="new-password"
+                  placeholder="Optional bearer token"
+                />
+              </label>
+              <label>
+                <span>Priority</span>
+                <select id="ntfy-priority" name="ntfy_priority">
+                  <option value="min">Min</option>
+                  <option value="low">Low</option>
+                  <option value="default">Default</option>
+                  <option value="high">High</option>
+                  <option value="urgent">Urgent</option>
+                </select>
+              </label>
+            </div>
           </form>
           <div class="settings-note" id="settings-note">
             Runtime proxy values are read from environment variables on startup.
           </div>
           <pre class="proxy-snippet" id="proxy-snippet"></pre>
+        </div>
+
+        <div class="panel-view" id="sources-view" hidden>
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Ingestion</p>
+              <h2>Sources</h2>
+            </div>
+            <select id="source-filter" aria-label="Filter sources">
+              <option value="all">All</option>
+              <option value="planned">Planned</option>
+              <option value="manual">Manual</option>
+              <option value="connected">Connected</option>
+            </select>
+          </div>
+
+          <div class="source-summary" id="source-summary"></div>
+          <div class="source-list" id="source-list"></div>
+        </div>
+
+        <div class="panel-view" id="reports-view" hidden>
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Briefing</p>
+              <h2>Reports</h2>
+            </div>
+            <button type="button" class="save-button" id="refresh-report">Refresh</button>
+          </div>
+
+          <div class="report-toolbar">
+            <select id="report-scope" aria-label="Report scope">
+              <option value="all">All events</option>
+              <option value="current">Current</option>
+              <option value="upcoming">Upcoming</option>
+              <option value="monitoring">Monitoring</option>
+            </select>
+            <select id="report-category" aria-label="Report category">
+              <option value="all">All categories</option>
+              <option value="weather">Weather</option>
+              <option value="hybrid">Hybrid</option>
+              <option value="electrical">Electrical</option>
+              <option value="food">Food</option>
+              <option value="health">Health</option>
+              <option value="transport">Transport</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+
+          <div class="report-grid" id="report-summary"></div>
+          <div class="report-section">
+            <h3>Situation Brief</h3>
+            <div class="report-brief" id="report-brief"></div>
+          </div>
+          <div class="report-section">
+            <h3>Priority Events</h3>
+            <div class="report-list" id="report-list"></div>
+          </div>
         </div>
       </aside>
     </main>

@@ -10,6 +10,11 @@ services:
       ARGUS_TRUSTED_HOSTS: ${ARGUS_TRUSTED_HOSTS:-*}
       ARGUS_PROXY_HEADERS: ${ARGUS_PROXY_HEADERS:-true}
       ARGUS_FORWARDED_ALLOW_IPS: ${ARGUS_FORWARDED_ALLOW_IPS:-*}
+      ARGUS_NTFY_ENABLED: ${ARGUS_NTFY_ENABLED:-false}
+      ARGUS_NTFY_SERVER_URL: ${ARGUS_NTFY_SERVER_URL:-https://ntfy.sh}
+      ARGUS_NTFY_TOPIC: ${ARGUS_NTFY_TOPIC:-}
+      ARGUS_NTFY_TOKEN: ${ARGUS_NTFY_TOKEN:-}
+      ARGUS_NTFY_PRIORITY: ${ARGUS_NTFY_PRIORITY:-default}
     volumes:
       - argus-data:/data
     restart: unless-stopped

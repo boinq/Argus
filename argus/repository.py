@@ -79,8 +79,9 @@ def get_settings() -> AppSettings:
     with connect() as connection:
         rows = connection.execute("SELECT key, value FROM app_settings").fetchall()
     values = {row["key"]: row["value"] for row in rows}
-    if "proxy_headers" in values:
-        values["proxy_headers"] = values["proxy_headers"].lower() == "true"
+    for key in ("proxy_headers", "ntfy_enabled"):
+        if key in values:
+            values[key] = values[key].lower() == "true"
     return AppSettings.model_validate(values)
 
 
