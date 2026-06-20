@@ -10,7 +10,13 @@
       integrity="sha256-p4NxAoJBhIINfQngD8nM1xJfyw18mTd6fL7uJkKc9RE="
       crossorigin=""
     />
-    <link rel="stylesheet" href="static/styles.css" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"
+      integrity="sha256-YU3qCpj/P06tdPBJGPax0bm6Q1wltfwjsho5TR4+TYc="
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="static/styles.css?v=20260620-clusters" />
   </head>
   <body>
     <main class="shell">
@@ -54,6 +60,31 @@
           <span><i class="severity medium"></i>Medium</span>
           <span><i class="severity low"></i>Low</span>
         </div>
+        <section class="layer-control" aria-label="Map layers">
+          <header class="layer-control-header">
+            <div>
+              <p class="eyebrow">Layers</p>
+              <h2>Map Nodes</h2>
+            </div>
+            <span class="layer-count" id="layer-count">0 shown</span>
+          </header>
+          <div class="layer-actions" aria-label="Layer actions">
+            <button type="button" id="layers-all">All</button>
+            <button type="button" id="layers-none">None</button>
+          </div>
+          <label class="layer-toggle">
+            <input id="observation-layer-toggle" type="checkbox" checked />
+            <span>DMI observations</span>
+          </label>
+          <div class="layer-group">
+            <h3>Categories</h3>
+            <div class="layer-options" id="category-layer-options"></div>
+          </div>
+          <div class="layer-group">
+            <h3>Sources</h3>
+            <div class="layer-options" id="source-layer-options"></div>
+          </div>
+        </section>
       </section>
 
       <aside class="event-panel" aria-label="Hazard event feed">
@@ -71,6 +102,8 @@
               <option value="food">Food</option>
               <option value="health">Health</option>
               <option value="transport">Transport</option>
+              <option value="maritime">Maritime</option>
+              <option value="emergency">Emergency</option>
               <option value="other">Other</option>
             </select>
           </div>
@@ -170,14 +203,21 @@
               <p class="eyebrow">Ingestion</p>
               <h2>Sources</h2>
             </div>
-            <select id="source-filter" aria-label="Filter sources">
-              <option value="all">All</option>
-              <option value="planned">Planned</option>
-              <option value="manual">Manual</option>
-              <option value="connected">Connected</option>
-            </select>
+            <button type="button" class="save-button" id="sync-source" disabled>Sync</button>
           </div>
 
+          <div class="report-toolbar">
+            <select id="source-filter" aria-label="Filter sources">
+              <option value="all">All sources</option>
+              <option value="connected">Connected</option>
+              <option value="planned">Planned</option>
+              <option value="manual">Manual</option>
+              <option value="error">Error</option>
+            </select>
+            <select id="source-sync-target" aria-label="Select source to sync"></select>
+          </div>
+          <div class="settings-note" id="source-note"></div>
+          <div class="settings-note" id="observation-note"></div>
           <div class="source-summary" id="source-summary"></div>
           <div class="source-list" id="source-list"></div>
         </div>
@@ -206,6 +246,8 @@
               <option value="food">Food</option>
               <option value="health">Health</option>
               <option value="transport">Transport</option>
+              <option value="maritime">Maritime</option>
+              <option value="emergency">Emergency</option>
               <option value="other">Other</option>
             </select>
           </div>
@@ -228,6 +270,11 @@
       integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
       crossorigin=""
     ></script>
-    <script src="static/app.js"></script>
+    <script
+      src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"
+      integrity="sha256-Hk4dIpcqOSb0hZjgyvFOP+cEmDXUKKNE/tT542ZbNQg="
+      crossorigin=""
+    ></script>
+    <script src="static/app.js?v=20260620-clusters"></script>
   </body>
 </html>

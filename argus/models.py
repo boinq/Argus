@@ -6,9 +6,20 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-Category = Literal["weather", "hybrid", "electrical", "food", "health", "transport", "other"]
+Category = Literal[
+    "weather",
+    "hybrid",
+    "electrical",
+    "food",
+    "health",
+    "transport",
+    "maritime",
+    "emergency",
+    "other",
+]
 Severity = Literal["low", "medium", "high", "critical"]
 Status = Literal["monitoring", "upcoming", "current", "resolved"]
+SourceStatus = Literal["connected", "planned", "manual", "error"]
 
 
 class EventBase(BaseModel):
@@ -68,3 +79,53 @@ class AppSettingsUpdate(BaseModel):
     ntfy_topic: str | None = Field(default=None, max_length=120)
     ntfy_token: str | None = Field(default=None, max_length=500)
     ntfy_priority: str | None = Field(default=None, max_length=20)
+
+
+class Source(BaseModel):
+    id: str
+    name: str
+    type: str
+    status: SourceStatus
+    coverage: str
+    cadence: str
+    endpoint: str
+    last_check: datetime | None = None
+    last_success: datetime | None = None
+    last_error: str | None = None
+    updated_at: datetime
+
+
+class RawObservation(BaseModel):
+    id: str
+    source_id: str
+    observed_at: datetime
+    parameter_id: str
+    station_id: str
+    latitude: float
+    longitude: float
+    value: float
+    created_at: datetime
+
+
+class IngestResult(BaseModel):
+    source_id: str
+    observations_seen: int
+    observations_stored: int
+    events_created: int
+    events_updated: int
+    message: str
+
+
+class SchedulerJobStatus(BaseModel):
+    id: str
+    source_id: str
+    name: str
+    interval_seconds: int
+    enabled: bool
+    running: bool
+    runs: int
+    failures: int
+    last_started: datetime | None = None
+    last_finished: datetime | None = None
+    last_result: str | None = None
+    last_error: str | None = None

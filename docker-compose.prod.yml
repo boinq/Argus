@@ -1,0 +1,8 @@
+services:
+  argus:
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./data:/data
+    restart: unless-stopped

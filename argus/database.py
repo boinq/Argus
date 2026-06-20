@@ -55,10 +55,62 @@ def init_db() -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sources (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                coverage TEXT NOT NULL,
+                cadence TEXT NOT NULL,
+                endpoint TEXT NOT NULL,
+                last_check TEXT,
+                last_success TEXT,
+                last_error TEXT,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS raw_observations (
+                id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                observed_at TEXT NOT NULL,
+                parameter_id TEXT NOT NULL,
+                station_id TEXT NOT NULL,
+                latitude REAL NOT NULL,
+                longitude REAL NOT NULL,
+                value REAL NOT NULL,
+                payload TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS raw_articles (
+                id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                url TEXT NOT NULL,
+                published_at TEXT,
+                summary TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_events_source_title
+            ON events (source, title)
+            """
+        )
         seed_settings(connection)
-        count = connection.execute("SELECT COUNT(*) FROM events").fetchone()[0]
-        if count == 0:
-            seed_events(connection)
+        seed_sources(connection)
+        cleanup_legacy_seed_data(connection)
 
 
 def seed_settings(connection: sqlite3.Connection) -> None:
@@ -79,68 +131,129 @@ def seed_settings(connection: sqlite3.Connection) -> None:
     )
 
 
-def seed_events(connection: sqlite3.Connection) -> None:
+def seed_sources(connection: sqlite3.Connection) -> None:
     rows = [
         (
-            "Storm surge watch, southwest Jutland",
+            "dmi-metobs",
+            "DMI Meteorological Observations",
             "weather",
-            "high",
-            "upcoming",
-            "DMI coastal forecast",
-            "Elevated water levels and strong westerly winds may affect low-lying coastal roads.",
-            55.333,
-            8.763,
-            "2026-06-20T18:00:00+02:00",
-            "2026-06-21T06:00:00+02:00",
-            "2026-06-20T16:00:00+02:00",
+            "connected",
+            "Danish observation stations",
+            "Every 10 minutes",
+            "https://dmigw.govcloud.dk/v2/metObs/collections/observation/items",
         ),
         (
-            "Power disruption reports, Greater Copenhagen",
+            "dr-news",
+            "DR News",
+            "news",
+            "connected",
+            "Denmark national news RSS",
+            "Every 10 minutes",
+            "https://www.dr.dk/nyheder/service/feeds/allenyheder",
+        ),
+        (
+            "energidataservice-elspot",
+            "Energi Data Service Electricity Prices",
             "electrical",
-            "medium",
-            "current",
-            "Grid operator incident desk",
-            "Localized outages are being tracked across several eastern suburbs.",
-            55.676,
-            12.568,
-            "2026-06-20T15:20:00+02:00",
-            None,
-            "2026-06-20T15:45:00+02:00",
+            "connected",
+            "DK1 and DK2 electricity market telemetry",
+            "Every 10 minutes",
+            "https://api.energidataservice.dk/dataset/Elspotprices",
         ),
         (
-            "Suspicious maritime activity, Great Belt",
-            "hybrid",
-            "medium",
-            "monitoring",
-            "Maritime domain awareness feed",
-            "Unusual vessel behavior near critical infrastructure is under observation.",
-            55.347,
-            10.958,
-            "2026-06-20T11:30:00+02:00",
-            None,
-            "2026-06-20T14:10:00+02:00",
+            "greenpowerdenmark-incidents",
+            "Green Power Denmark Elnet Incidents",
+            "electrical",
+            "connected",
+            "Current and upcoming Danish electricity grid incidents",
+            "Every 10 minutes",
+            "https://api.elnet.greenpowerdenmark.dk/api/incidents",
         ),
         (
-            "Regional supply pressure, North Jutland",
-            "food",
-            "low",
-            "upcoming",
-            "Municipal logistics report",
-            "Distribution delays could affect selected shelf-stable goods if transport disruption continues.",
-            57.048,
-            9.919,
-            "2026-06-21T08:00:00+02:00",
-            "2026-06-22T20:00:00+02:00",
-            "2026-06-20T13:20:00+02:00",
+            "dma-news",
+            "Danish Maritime Authority News",
+            "maritime",
+            "connected",
+            "Official DMA maritime news archive",
+            "Every 10 minutes",
+            "https://www.dma.dk/news",
+        ),
+        (
+            "niord-messages",
+            "Niord Nautical Information",
+            "maritime",
+            "connected",
+            "Official Danish navigational warnings and notices",
+            "Every 10 minutes",
+            "https://niord.dma.dk/rest/public/v1/messages",
+        ),
+        (
+            "trafikinfo-events",
+            "Vejdirektoratet Trafikinfo Events",
+            "transport",
+            "connected",
+            "Current Danish traffic event feed",
+            "Every 10 minutes",
+            "https://storage.googleapis.com/trafikkort-data/geojson/big-screen-events.json",
+        ),
+        (
+            "health-alerts",
+            "Danish Health Alerts",
+            "health",
+            "connected",
+            "Sundhedsstyrelsen news and public health notices",
+            "Every 30 minutes",
+            "https://www.sst.dk/nyheder",
+        ),
+        (
+            "odin-incidents",
+            "ODIN Beredskabsstyrelsen",
+            "emergency",
+            "connected",
+            "Nationwide ODIN 1-1-2 emergency pulse RSS",
+            "Every 10 minutes",
+            "http://www.odin.dk/RSS/RSS.aspx?beredskabsID=0000",
         ),
     ]
     connection.executemany(
         """
-        INSERT INTO events (
-            title, category, severity, status, source, description, latitude,
-            longitude, starts_at, ends_at, updated_at
+        INSERT INTO sources (
+            id, name, type, status, coverage, cadence, endpoint, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            type = excluded.type,
+            coverage = excluded.coverage,
+            cadence = excluded.cadence,
+            endpoint = excluded.endpoint,
+            updated_at = datetime('now')
         """,
         rows,
+    )
+    deprecated_source_ids = (
+        "energinet-operational",
+        "maritime-watch",
+        "civil-protection",
+        "municipal-reports",
+        "trafikinfo",
+        "manual-intel",
+    )
+    connection.execute(
+        f"DELETE FROM sources WHERE id IN ({','.join('?' for _ in deprecated_source_ids)})",
+        deprecated_source_ids,
+    )
+
+
+def cleanup_legacy_seed_data(connection: sqlite3.Connection) -> None:
+    legacy_seed_sources = (
+        "DMI coastal forecast",
+        "Grid operator incident desk",
+        "Maritime domain awareness feed",
+        "Municipal logistics report",
+        "Trafikinfo",
+    )
+    connection.execute(
+        f"DELETE FROM events WHERE source IN ({','.join('?' for _ in legacy_seed_sources)})",
+        legacy_seed_sources,
     )

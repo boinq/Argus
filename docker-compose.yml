@@ -1,8 +1,9 @@
 services:
   argus:
     build: .
+    image: argus:local
     ports:
-      - "8000:8000"
+      - "${ARGUS_BIND_ADDRESS:-127.0.0.1}:${ARGUS_BIND_PORT:-8000}:8000"
     environment:
       ARGUS_DB_PATH: /data/argus.db
       ARGUS_PUBLIC_BASE_URL: ${ARGUS_PUBLIC_BASE_URL:-http://localhost:8000}
@@ -15,8 +16,31 @@ services:
       ARGUS_NTFY_TOPIC: ${ARGUS_NTFY_TOPIC:-}
       ARGUS_NTFY_TOKEN: ${ARGUS_NTFY_TOKEN:-}
       ARGUS_NTFY_PRIORITY: ${ARGUS_NTFY_PRIORITY:-default}
+      ARGUS_SCHEDULER_ENABLED: ${ARGUS_SCHEDULER_ENABLED:-true}
+      ARGUS_SCHEDULER_STARTUP_DELAY_SECONDS: ${ARGUS_SCHEDULER_STARTUP_DELAY_SECONDS:-15}
+      ARGUS_DMI_METOBS_INTERVAL_SECONDS: ${ARGUS_DMI_METOBS_INTERVAL_SECONDS:-600}
+      ARGUS_DR_NEWS_INTERVAL_SECONDS: ${ARGUS_DR_NEWS_INTERVAL_SECONDS:-600}
+      ARGUS_ELECTRICITY_INTERVAL_SECONDS: ${ARGUS_ELECTRICITY_INTERVAL_SECONDS:-600}
+      ARGUS_ELECTRICITY_INCIDENTS_INTERVAL_SECONDS: ${ARGUS_ELECTRICITY_INCIDENTS_INTERVAL_SECONDS:-600}
+      ARGUS_MARITIME_INTERVAL_SECONDS: ${ARGUS_MARITIME_INTERVAL_SECONDS:-600}
+      ARGUS_NIORD_INTERVAL_SECONDS: ${ARGUS_NIORD_INTERVAL_SECONDS:-600}
+      ARGUS_ODIN_INTERVAL_SECONDS: ${ARGUS_ODIN_INTERVAL_SECONDS:-600}
+      ARGUS_TRAFFIC_INTERVAL_SECONDS: ${ARGUS_TRAFFIC_INTERVAL_SECONDS:-600}
+      ARGUS_HEALTH_ALERTS_INTERVAL_SECONDS: ${ARGUS_HEALTH_ALERTS_INTERVAL_SECONDS:-1800}
     volumes:
       - argus-data:/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5).read()",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
 volumes:
