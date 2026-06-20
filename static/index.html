@@ -10,7 +10,7 @@
       integrity="sha256-p4NxAoJBhIINfQngD8nM1xJfyw18mTd6fL7uJkKc9RE="
       crossorigin=""
     />
-    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="static/styles.css" />
   </head>
   <body>
     <main class="shell">
@@ -33,12 +33,12 @@
             <p class="eyebrow">Argus</p>
             <h2>Operations</h2>
           </div>
-          <button type="button" class="menu-item active">Map</button>
+          <button type="button" class="menu-item active" data-view="events">Map</button>
           <button type="button" class="menu-item">Sensors</button>
           <button type="button" class="menu-item">Alerts</button>
           <button type="button" class="menu-item">Sources</button>
           <button type="button" class="menu-item">Reports</button>
-          <button type="button" class="menu-item">Settings</button>
+          <button type="button" class="menu-item" data-view="settings">Settings</button>
         </nav>
         <div class="menu-scrim" id="menu-scrim" hidden></div>
         <div class="topbar">
@@ -57,24 +57,68 @@
       </section>
 
       <aside class="event-panel" aria-label="Hazard event feed">
-        <div class="panel-header">
-          <div>
-            <p class="eyebrow">Live Feed</p>
-            <h2>Events</h2>
+        <div class="panel-view" id="events-view">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Live Feed</p>
+              <h2>Events</h2>
+            </div>
+            <select id="category-filter" aria-label="Filter by category">
+              <option value="all">All</option>
+              <option value="weather">Weather</option>
+              <option value="hybrid">Hybrid</option>
+              <option value="electrical">Electrical</option>
+              <option value="food">Food</option>
+              <option value="health">Health</option>
+              <option value="transport">Transport</option>
+              <option value="other">Other</option>
+            </select>
           </div>
-          <select id="category-filter" aria-label="Filter by category">
-            <option value="all">All</option>
-            <option value="weather">Weather</option>
-            <option value="hybrid">Hybrid</option>
-            <option value="electrical">Electrical</option>
-            <option value="food">Food</option>
-            <option value="health">Health</option>
-            <option value="transport">Transport</option>
-            <option value="other">Other</option>
-          </select>
+          <div class="summary-grid" id="summary"></div>
+          <div class="event-list" id="event-list"></div>
         </div>
-        <div class="summary-grid" id="summary"></div>
-        <div class="event-list" id="event-list"></div>
+
+        <div class="panel-view" id="settings-view" hidden>
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Configuration</p>
+              <h2>Settings</h2>
+            </div>
+            <button type="submit" class="save-button" form="settings-form">Save</button>
+          </div>
+          <form class="settings-form" id="settings-form">
+            <label>
+              <span>Public URL</span>
+              <input
+                id="public-base-url"
+                name="public_base_url"
+                type="url"
+                placeholder="https://argus.example.dk"
+              />
+            </label>
+            <label>
+              <span>Path prefix</span>
+              <input id="path-prefix" name="path_prefix" type="text" placeholder="/argus" />
+            </label>
+            <label>
+              <span>Trusted hosts</span>
+              <input
+                id="trusted-hosts"
+                name="trusted_hosts"
+                type="text"
+                placeholder="argus.example.dk,localhost"
+              />
+            </label>
+            <label class="checkbox-row">
+              <input id="proxy-headers" name="proxy_headers" type="checkbox" />
+              <span>Trust forwarded proxy headers</span>
+            </label>
+          </form>
+          <div class="settings-note" id="settings-note">
+            Runtime proxy values are read from environment variables on startup.
+          </div>
+          <pre class="proxy-snippet" id="proxy-snippet"></pre>
+        </div>
       </aside>
     </main>
 
@@ -83,6 +127,6 @@
       integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
       crossorigin=""
     ></script>
-    <script src="/static/app.js"></script>
+    <script src="static/app.js"></script>
   </body>
 </html>

@@ -47,9 +47,31 @@ def init_db() -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+            """
+        )
+        seed_settings(connection)
         count = connection.execute("SELECT COUNT(*) FROM events").fetchone()[0]
         if count == 0:
             seed_events(connection)
+
+
+def seed_settings(connection: sqlite3.Connection) -> None:
+    defaults = {
+        "public_base_url": os.getenv("ARGUS_PUBLIC_BASE_URL", "http://localhost:8000"),
+        "path_prefix": os.getenv("ARGUS_ROOT_PATH", ""),
+        "trusted_hosts": os.getenv("ARGUS_TRUSTED_HOSTS", "*"),
+        "proxy_headers": os.getenv("ARGUS_PROXY_HEADERS", "true"),
+    }
+    connection.executemany(
+        "INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)",
+        defaults.items(),
+    )
 
 
 def seed_events(connection: sqlite3.Connection) -> None:

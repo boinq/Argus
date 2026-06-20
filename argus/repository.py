@@ -4,7 +4,7 @@ import sqlite3
 from datetime import datetime, timezone
 
 from argus.database import connect
-from argus.models import Event, EventCreate, EventUpdate
+from argus.models import AppSettings, AppSettingsUpdate, Event, EventCreate, EventUpdate
 
 
 EVENT_COLUMNS = """
@@ -73,3 +73,34 @@ def update_event(event_id: int, payload: EventUpdate) -> Event | None:
         if cursor.rowcount == 0:
             return None
     return get_event(event_id)
+
+
+def get_settings() -> AppSettings:
+    with connect() as connection:
+        rows = connection.execute("SELECT key, value FROM app_settings").fetchall()
+    values = {row["key"]: row["value"] for row in rows}
+    if "proxy_headers" in values:
+        values["proxy_headers"] = values["proxy_headers"].lower() == "true"
+    return AppSettings.model_validate(values)
+
+
+def update_settings(payload: AppSettingsUpdate) -> AppSettings:
+    changes = payload.model_dump(exclude_unset=True)
+    if not changes:
+        return get_settings()
+
+    rows = [
+        (key, "true" if value is True else "false" if value is False else str(value))
+        for key, value in changes.items()
+        if value is not None
+    ]
+    with connect() as connection:
+        connection.executemany(
+            """
+            INSERT INTO app_settings (key, value)
+            VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            rows,
+        )
+    return get_settings()

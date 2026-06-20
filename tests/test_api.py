@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from argus.database import init_db
-from argus.main import api_create_event, api_list_events, health
-from argus.models import EventCreate
+from argus.main import api_create_event, api_get_settings, api_list_events, api_update_settings, health
+from argus.models import AppSettingsUpdate, EventCreate
 
 
 def test_health(tmp_path, monkeypatch):
@@ -45,3 +45,21 @@ def test_create_event(tmp_path, monkeypatch):
 
     assert event.id > 0
     assert event.title == payload.title
+
+
+def test_settings_can_be_updated(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
+    init_db()
+
+    settings = api_update_settings(
+        AppSettingsUpdate(
+            public_base_url="https://argus.example.dk",
+            path_prefix="/argus",
+            trusted_hosts="argus.example.dk,localhost",
+            proxy_headers=True,
+        )
+    )
+
+    assert settings.public_base_url == "https://argus.example.dk"
+    assert settings.path_prefix == "/argus"
+    assert api_get_settings().trusted_hosts == "argus.example.dk,localhost"

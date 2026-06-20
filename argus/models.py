@@ -44,3 +44,17 @@ class EventUpdate(BaseModel):
 class Event(EventBase):
     id: int
     updated_at: datetime
+
+
+class AppSettings(BaseModel):
+    public_base_url: str = Field(default="http://localhost:8000", max_length=240)
+    path_prefix: str = Field(default="", max_length=80)
+    trusted_hosts: str = Field(default="*", max_length=500)
+    proxy_headers: bool = True
+
+
+class AppSettingsUpdate(BaseModel):
+    public_base_url: str | None = Field(default=None, max_length=240)
+    path_prefix: str | None = Field(default=None, max_length=80)
+    trusted_hosts: str | None = Field(default=None, max_length=500)
+    proxy_headers: bool | None = None

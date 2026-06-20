@@ -47,6 +47,16 @@ const categoryFilter = document.querySelector("#category-filter");
 const menuToggle = document.querySelector("#menu-toggle");
 const sideMenu = document.querySelector("#side-menu");
 const menuScrim = document.querySelector("#menu-scrim");
+const menuItems = document.querySelectorAll(".menu-item[data-view]");
+const eventsView = document.querySelector("#events-view");
+const settingsView = document.querySelector("#settings-view");
+const settingsForm = document.querySelector("#settings-form");
+const settingsNote = document.querySelector("#settings-note");
+const proxySnippet = document.querySelector("#proxy-snippet");
+const publicBaseUrl = document.querySelector("#public-base-url");
+const pathPrefix = document.querySelector("#path-prefix");
+const trustedHosts = document.querySelector("#trusted-hosts");
+const proxyHeaders = document.querySelector("#proxy-headers");
 
 function formatDate(value) {
   return new Intl.DateTimeFormat("en-DK", {
@@ -194,7 +204,7 @@ function render() {
 
 async function loadEvents() {
   try {
-    const response = await fetch("/api/events");
+    const response = await fetch("api/events");
     if (!response.ok) {
       throw new Error(`API responded with ${response.status}`);
     }
@@ -209,12 +219,93 @@ async function loadEvents() {
   }
 }
 
+async function loadSettings() {
+  try {
+    const response = await fetch("api/settings");
+    if (!response.ok) {
+      throw new Error(`API responded with ${response.status}`);
+    }
+    const settings = await response.json();
+    fillSettings(settings);
+    renderProxySnippet(settings);
+    settingsNote.textContent = "Settings loaded.";
+    settingsNote.classList.remove("error");
+  } catch (error) {
+    settingsNote.textContent = error.message;
+    settingsNote.classList.add("error");
+  }
+}
+
+async function saveSettings(event) {
+  event.preventDefault();
+  const payload = {
+    public_base_url: publicBaseUrl.value.trim(),
+    path_prefix: pathPrefix.value.trim(),
+    trusted_hosts: trustedHosts.value.trim(),
+    proxy_headers: proxyHeaders.checked,
+  };
+
+  try {
+    const response = await fetch("api/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      throw new Error(`API responded with ${response.status}`);
+    }
+    const settings = await response.json();
+    fillSettings(settings);
+    renderProxySnippet(settings);
+    settingsNote.textContent = "Settings saved. Restart the container after changing proxy runtime values.";
+    settingsNote.classList.remove("error");
+  } catch (error) {
+    settingsNote.textContent = error.message;
+    settingsNote.classList.add("error");
+  }
+}
+
+function fillSettings(settings) {
+  publicBaseUrl.value = settings.public_base_url || "";
+  pathPrefix.value = settings.path_prefix || "";
+  trustedHosts.value = settings.trusted_hosts || "";
+  proxyHeaders.checked = Boolean(settings.proxy_headers);
+}
+
+function renderProxySnippet(settings) {
+  const prefix = settings.path_prefix || "";
+  const lines = [
+    "ARGUS_PUBLIC_BASE_URL=" + (settings.public_base_url || ""),
+    "ARGUS_ROOT_PATH=" + prefix,
+    "ARGUS_TRUSTED_HOSTS=" + (settings.trusted_hosts || "*"),
+    "ARGUS_PROXY_HEADERS=" + String(Boolean(settings.proxy_headers)),
+  ];
+  proxySnippet.textContent = lines.join("\n");
+}
+
+function setView(viewName) {
+  const showingSettings = viewName === "settings";
+  eventsView.hidden = showingSettings;
+  settingsView.hidden = !showingSettings;
+  menuItems.forEach((item) => {
+    item.classList.toggle("active", item.dataset.view === viewName);
+  });
+  setMenuOpen(false);
+  if (showingSettings) {
+    loadSettings();
+  }
+}
+
 categoryFilter.addEventListener("change", render);
 menuToggle.addEventListener("click", () => {
   const isOpen = sideMenu.classList.contains("open");
   setMenuOpen(!isOpen);
 });
 menuScrim.addEventListener("click", () => setMenuOpen(false));
+menuItems.forEach((item) => {
+  item.addEventListener("click", () => setView(item.dataset.view));
+});
+settingsForm.addEventListener("submit", saveSettings);
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     setMenuOpen(false);
@@ -227,7 +318,13 @@ function setMenuOpen(isOpen) {
   menuToggle.setAttribute("aria-expanded", String(isOpen));
   menuToggle.setAttribute("aria-label", isOpen ? "Close menu" : "Open menu");
   menuScrim.hidden = !isOpen;
+  if (isOpen) {
+    sideMenu.removeAttribute("inert");
+  } else {
+    sideMenu.setAttribute("inert", "");
+  }
 }
 
+setMenuOpen(false);
 loadEvents();
 setInterval(loadEvents, 60000);

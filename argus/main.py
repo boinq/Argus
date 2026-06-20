@@ -1,16 +1,25 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import os
 from pathlib import Path
 from typing import AsyncIterator
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from argus.database import init_db
-from argus.models import Event, EventCreate, EventUpdate
-from argus.repository import create_event, get_event, list_events, update_event
+from argus.models import AppSettings, AppSettingsUpdate, Event, EventCreate, EventUpdate
+from argus.repository import (
+    create_event,
+    get_event,
+    get_settings,
+    list_events,
+    update_event,
+    update_settings,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -28,8 +37,15 @@ app = FastAPI(
     description="Denmark-focused hazardous event monitoring API.",
     version="0.1.0",
     lifespan=lifespan,
+    root_path=os.getenv("ARGUS_ROOT_PATH", ""),
 )
 
+trusted_hosts = [
+    host.strip()
+    for host in os.getenv("ARGUS_TRUSTED_HOSTS", "*").split(",")
+    if host.strip()
+]
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=trusted_hosts or ["*"])
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
@@ -51,6 +67,16 @@ def health() -> dict[str, str]:
 @app.get("/api/events", response_model=list[Event])
 def api_list_events() -> list[Event]:
     return list_events()
+
+
+@app.get("/api/settings", response_model=AppSettings)
+def api_get_settings() -> AppSettings:
+    return get_settings()
+
+
+@app.patch("/api/settings", response_model=AppSettings)
+def api_update_settings(payload: AppSettingsUpdate) -> AppSettings:
+    return update_settings(payload)
 
 
 @app.get("/api/events/{event_id}", response_model=Event)

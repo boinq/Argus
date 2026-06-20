@@ -5,6 +5,11 @@ services:
       - "8000:8000"
     environment:
       ARGUS_DB_PATH: /data/argus.db
+      ARGUS_PUBLIC_BASE_URL: ${ARGUS_PUBLIC_BASE_URL:-http://localhost:8000}
+      ARGUS_ROOT_PATH: ${ARGUS_ROOT_PATH:-}
+      ARGUS_TRUSTED_HOSTS: ${ARGUS_TRUSTED_HOSTS:-*}
+      ARGUS_PROXY_HEADERS: ${ARGUS_PROXY_HEADERS:-true}
+      ARGUS_FORWARDED_ALLOW_IPS: ${ARGUS_FORWARDED_ALLOW_IPS:-*}
     volumes:
       - argus-data:/data
     restart: unless-stopped
