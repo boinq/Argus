@@ -47,6 +47,14 @@
     bottom: 12px;
   }
 
+  .event-detail-drawer {
+    left: 12px;
+    right: 12px;
+    bottom: 72px;
+    width: auto;
+    max-height: 42vh;
+  }
+
   .layer-control {
     left: 12px;
     right: 12px;

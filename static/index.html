@@ -16,7 +16,7 @@
       integrity="sha256-YU3qCpj/P06tdPBJGPax0bm6Q1wltfwjsho5TR4+TYc="
       crossorigin=""
     />
-    <link rel="stylesheet" href="static/styles.css?v=20260620-clusters" />
+    <link rel="stylesheet" href="static/styles.css?v=20260620-details" />
   </head>
   <body>
     <main class="shell">
@@ -85,6 +85,14 @@
             <div class="layer-options" id="source-layer-options"></div>
           </div>
         </section>
+        <aside
+          class="event-detail-drawer"
+          id="event-detail-drawer"
+          aria-label="Selected event detail"
+          hidden
+        >
+          <div class="event-detail-body" id="event-detail-body"></div>
+        </aside>
       </section>
 
       <aside class="event-panel" aria-label="Hazard event feed">
@@ -275,6 +283,6 @@
       integrity="sha256-Hk4dIpcqOSb0hZjgyvFOP+cEmDXUKKNE/tT542ZbNQg="
       crossorigin=""
     ></script>
-    <script type="module" src="static/app.js?v=20260620-modules"></script>
+    <script type="module" src="static/app.js?v=20260620-details"></script>
   </body>
 </html>

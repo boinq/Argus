@@ -1,4 +1,5 @@
 import { createMarkerLayer, setupMap } from "./js/map.js";
+import { eventDetailHtml } from "./js/event-detail.js";
 import { markerFor, markerForObservation } from "./js/markers.js";
 import { renderReports as renderReportsPanel, reportEvents as filterReportEvents } from "./js/reports-panel.js";
 import {
@@ -68,6 +69,8 @@ const layersNone = document.querySelector("#layers-none");
 const observationLayerToggle = document.querySelector("#observation-layer-toggle");
 const categoryLayerOptions = document.querySelector("#category-layer-options");
 const sourceLayerOptions = document.querySelector("#source-layer-options");
+const eventDetailDrawer = document.querySelector("#event-detail-drawer");
+const eventDetailBody = document.querySelector("#event-detail-body");
 let sources = [];
 let schedulerJobs = [];
 let observations = [];
@@ -326,6 +329,9 @@ function setActiveEvent(eventId, openPopup) {
   activeEventId = eventId;
   const event = events.find((item) => item.id === eventId);
   const marker = markers.get(eventId);
+  if (event) {
+    renderEventDetail(event);
+  }
   if (event && marker) {
     const reveal = () => {
       map.setView([event.latitude, event.longitude], Math.max(map.getZoom(), 8), {
@@ -366,6 +372,44 @@ function bindPopupAction(marker) {
   };
 }
 
+function renderEventDetail(event) {
+  eventDetailBody.innerHTML = eventDetailHtml(event, { events, sources });
+  eventDetailDrawer.hidden = false;
+}
+
+function closeEventDetail() {
+  eventDetailDrawer.hidden = true;
+}
+
+function focusActiveEvent() {
+  if (activeEventId === null) {
+    return;
+  }
+  setActiveEvent(activeEventId, true);
+}
+
+function showActiveEventInFeed() {
+  if (activeEventId === null) {
+    return;
+  }
+  categoryFilter.value = "all";
+  setView("events");
+  renderEvents(filteredEvents());
+  scrollActiveEventIntoView();
+}
+
+function refreshActiveEventDetail() {
+  if (eventDetailDrawer.hidden || activeEventId === null) {
+    return;
+  }
+  const event = events.find((item) => item.id === activeEventId);
+  if (event) {
+    renderEventDetail(event);
+  } else {
+    closeEventDetail();
+  }
+}
+
 function render() {
   const items = filteredEvents();
   renderSummary(items);
@@ -373,6 +417,7 @@ function render() {
   renderEvents(items);
   renderReports();
   renderSources();
+  refreshActiveEventDetail();
 }
 
 async function loadEvents() {
@@ -621,9 +666,37 @@ menuItems.forEach((item) => {
   item.addEventListener("click", () => setView(item.dataset.view));
 });
 settingsForm.addEventListener("submit", saveSettings);
+eventDetailDrawer.addEventListener("click", (event) => {
+  const relatedButton = event.target.closest("[data-related-event-id]");
+  if (relatedButton) {
+    setActiveEvent(Number(relatedButton.dataset.relatedEventId), true);
+    return;
+  }
+
+  const actionButton = event.target.closest("[data-detail-action]");
+  if (!actionButton) {
+    return;
+  }
+
+  const action = actionButton.dataset.detailAction;
+  if (action === "close") {
+    closeEventDetail();
+  } else if (action === "focus") {
+    focusActiveEvent();
+  } else if (action === "feed") {
+    showActiveEventInFeed();
+  } else if (action === "toggle-raw") {
+    const raw = eventDetailDrawer.querySelector("#event-detail-raw");
+    raw.hidden = !raw.hidden;
+  }
+});
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
-    setMenuOpen(false);
+    if (!eventDetailDrawer.hidden) {
+      closeEventDetail();
+    } else {
+      setMenuOpen(false);
+    }
   }
 });
 
