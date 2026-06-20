@@ -19,6 +19,7 @@ from argus.ingest.maritime import sync_maritime
 from argus.ingest.news import sync_news
 from argus.ingest.niord import sync_niord
 from argus.ingest.odin import sync_odin
+from argus.ingest.police import sync_police_short_messages
 from argus.ingest.traffic import sync_traffic
 from argus.models import (
     AppSettings,
@@ -111,6 +112,15 @@ scheduler.register(
         name="ODIN 1-1-2 pulse",
         interval_seconds=max(60, env_int("ARGUS_ODIN_INTERVAL_SECONDS", 600)),
         handler=sync_odin,
+    )
+)
+scheduler.register(
+    PollJob(
+        id="police-ritzau-short-messages",
+        source_id="police-ritzau-short-messages",
+        name="Police/Ritzau short messages",
+        interval_seconds=max(60, env_int("ARGUS_POLICE_RSS_INTERVAL_SECONDS", 600)),
+        handler=sync_police_short_messages,
     )
 )
 scheduler.register(
@@ -242,6 +252,11 @@ def api_sync_niord() -> IngestResult:
 @app.post("/api/sources/odin-incidents/sync", response_model=IngestResult)
 def api_sync_odin() -> IngestResult:
     return sync_odin()
+
+
+@app.post("/api/sources/police-ritzau-short-messages/sync", response_model=IngestResult)
+def api_sync_police_short_messages() -> IngestResult:
+    return sync_police_short_messages()
 
 
 @app.post("/api/sources/trafikinfo-events/sync", response_model=IngestResult)

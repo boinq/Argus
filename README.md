@@ -66,6 +66,7 @@ ARGUS_ELECTRICITY_INCIDENTS_INTERVAL_SECONDS=600
 ARGUS_MARITIME_INTERVAL_SECONDS=600
 ARGUS_NIORD_INTERVAL_SECONDS=600
 ARGUS_ODIN_INTERVAL_SECONDS=600
+ARGUS_POLICE_RSS_INTERVAL_SECONDS=600
 ARGUS_TRAFFIC_INTERVAL_SECONDS=600
 ARGUS_HEALTH_ALERTS_INTERVAL_SECONDS=1800
 ```
@@ -96,6 +97,7 @@ these values once notification dispatch is added.
 - `POST /api/sources/dma-news/sync`
 - `POST /api/sources/niord-messages/sync`
 - `POST /api/sources/odin-incidents/sync`
+- `POST /api/sources/police-ritzau-short-messages/sync`
 - `POST /api/sources/trafikinfo-events/sync`
 - `POST /api/sources/health-alerts/sync`
 - `GET /api/scheduler/jobs`
@@ -122,8 +124,8 @@ curl -X POST http://localhost:8000/api/scheduler/jobs/dmi-metobs/run
 
 The generic polling scheduler starts with the app when
 `ARGUS_SCHEDULER_ENABLED=true`. Weather, news, electricity, maritime, Niord,
-ODIN, and traffic integrations default to 10-minute polling. Danish Health
-Alerts still default to 30 minutes.
+ODIN, police/Ritzau, and traffic integrations default to 10-minute polling.
+Danish Health Alerts still default to 30 minutes.
 
 ## Other Ingestion Sources
 
@@ -135,6 +137,7 @@ Argus also polls these real public sources:
 - Danish Maritime Authority news archives for maritime safety/security notices.
 - Niord nautical information for official navigational warnings and notices.
 - ODIN 1-1-2 nationwide pulse RSS for recent emergency dispatches.
+- Police short-message RSS via Ritzau, with each linked message page crawled for detail text.
 - Vejdirektoratet Trafikinfo event JSON for current road and traffic events.
 
 ## Danish Health Alerts

@@ -214,6 +214,15 @@ def seed_sources(connection: sqlite3.Connection) -> None:
             "Every 10 minutes",
             "http://www.odin.dk/RSS/RSS.aspx?beredskabsID=0000",
         ),
+        (
+            "police-ritzau-short-messages",
+            "Police/Ritzau Short Messages",
+            "emergency",
+            "connected",
+            "Danish police authority short-message RSS with linked detail pages",
+            "Every 10 minutes",
+            "https://via.ritzau.dk/rss/short-messages/latest",
+        ),
     ]
     connection.executemany(
         """

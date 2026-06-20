@@ -19,6 +19,7 @@ ARGUS_TRUSTED_HOSTS=*
 ARGUS_BIND_ADDRESS=0.0.0.0
 ARGUS_BIND_PORT=8088
 ARGUS_FORWARDED_ALLOW_IPS=*
+ARGUS_POLICE_RSS_INTERVAL_SECONDS=600
 ```
 
 With those defaults, Argus is reachable on `http://<host-ip>:8088` from other

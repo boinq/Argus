@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import base64
+import json
+from urllib.parse import quote
+
 from argus.database import connect, init_db
 from argus.ingest.evaluator import evaluate_news_relevance
 from argus.ingest.common import DENMARK_CENTER
 from argus.ingest.odin import parse_odin_rss, station_location
+from argus.ingest.police import parse_article_page, parse_police_rss
 from argus.ingest.traffic import clean_traffic_text
 from argus.main import (
     api_create_event,
@@ -20,6 +25,7 @@ from argus.main import (
     api_sync_dmi_metobs,
     api_sync_niord,
     api_sync_odin,
+    api_sync_police_short_messages,
     api_sync_traffic,
     api_update_settings,
     health,
@@ -97,6 +103,7 @@ def test_sources_are_returned(tmp_path, monkeypatch):
     sources = api_list_sources()
 
     source_ids = {source.id for source in sources}
+    police_source = next(source for source in sources if source.id == "police-ritzau-short-messages")
     assert source_ids >= {
         "dmi-metobs",
         "dr-news",
@@ -107,7 +114,11 @@ def test_sources_are_returned(tmp_path, monkeypatch):
         "trafikinfo-events",
         "health-alerts",
         "odin-incidents",
+        "police-ritzau-short-messages",
     }
+    assert police_source.name == "Police/Ritzau Short Messages"
+    assert police_source.type == "emergency"
+    assert police_source.cadence == "Every 10 minutes"
     assert all(source.status == "connected" for source in sources)
 
 
@@ -206,6 +217,7 @@ def test_scheduler_jobs_are_returned():
     assert job_intervals["dma-news"] == 600
     assert job_intervals["niord-messages"] == 600
     assert job_intervals["odin-incidents"] == 600
+    assert job_intervals["police-ritzau-short-messages"] == 600
     assert job_intervals["trafikinfo-events"] == 600
     assert "health-alerts" in job_intervals
 
@@ -301,6 +313,133 @@ def test_news_sync_purges_old_false_positive_events(tmp_path, monkeypatch):
 
     assert result.events_created == 0
     assert all(event.source != "DR Nyheder" for event in api_list_events())
+
+
+def test_police_rss_parser_reads_items():
+    items = parse_police_rss(
+        """<?xml version="1.0" encoding="utf-8"?>
+        <rss version="2.0"><channel>
+          <item>
+            <title>Færdselsuheld på Østjyske Motorvej syd for Vejlefjordbroen</title>
+            <link>https://via.ritzau.dk/pressemeddelelse/15002803/faerdselsuheld?lang=da#sm-15002803</link>
+            <pubDate>Sat, 20 Jun 2026 11:55:07 GMT</pubDate>
+            <guid>https://via.ritzau.dk/pressemeddelelse/15002803/faerdselsuheld?lang=da#sm-15002803</guid>
+          </item>
+        </channel></rss>"""
+    )
+
+    assert len(items) == 1
+    assert items[0]["title"].startswith("Færdselsuheld")
+    assert items[0]["url"].endswith("#sm-15002803")
+    assert items[0]["published_at"] == "2026-06-20T11:55:07+00:00"
+
+
+def test_police_article_page_parser_reads_initial_state():
+    state = {
+        "release": {
+            "15002803": {
+                "items": [
+                    {
+                        "metadata": {
+                            "id": "15002803",
+                            "title": "Færdselsuheld på Østjyske Motorvej syd for Vejlefjordbroen",
+                            "url": "/pressemeddelelse/15002803/faerdselsuheld?lang=da#sm-15002803",
+                            "publicationDate": "2026-06-20T11:55:07Z",
+                            "publisherName": "Sydøstjyllands Politi",
+                            "publisher": {"city": "Horsens"},
+                        },
+                        "versions": [
+                            {
+                                "body": {
+                                    "complete": "<p>Vi modtog en anmeldelse om et færdselsuheld.</p>"
+                                }
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+    }
+    encoded = base64.b64encode(quote(json.dumps(state)).encode()).decode()
+
+    article = parse_article_page(
+        f"<script>window.__INITIAL_STATE__ = '{encoded}'</script>",
+        {
+            "id": "fallback",
+            "title": "Fallback title",
+            "url": "https://via.ritzau.dk/fallback",
+            "published_at": None,
+            "summary": "",
+        },
+    )
+
+    assert article["id"] == "police-ritzau-short-messages:15002803"
+    assert article["title"].startswith("Færdselsuheld")
+    assert article["url"].startswith("https://via.ritzau.dk/pressemeddelelse/")
+    assert article["published_at"] == "2026-06-20T11:55:07+00:00"
+    assert article["summary"] == "Vi modtog en anmeldelse om et færdselsuheld."
+    assert article["publisher"] == "Sydøstjyllands Politi"
+    assert article["publisher_city"] == "Horsens"
+
+
+def test_police_sync_crawls_links_and_creates_relevant_event(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
+    init_db()
+
+    rss_item = {
+        "id": "police-ritzau-short-messages:15002803",
+        "title": "Færdselsuheld på Østjyske Motorvej syd for Vejlefjordbroen",
+        "url": "https://via.ritzau.dk/pressemeddelelse/15002803/faerdselsuheld?lang=da#sm-15002803",
+        "published_at": "2026-06-20T11:55:07+00:00",
+        "summary": "",
+    }
+    article = {
+        **rss_item,
+        "summary": "Vi modtog en anmeldelse om et færdselsuheld på motorvejen.",
+        "publisher": "Sydøstjyllands Politi",
+        "publisher_city": "Horsens",
+    }
+    monkeypatch.setattr("argus.ingest.police.fetch_police_rss", lambda limit: [rss_item])
+    monkeypatch.setattr("argus.ingest.police.fetch_article_details", lambda items: [article])
+
+    result = api_sync_police_short_messages()
+    events = api_list_events()
+
+    assert result.observations_seen == 1
+    assert result.observations_stored == 1
+    assert result.events_created == 1
+    assert events[0].source == "Police/Ritzau Short Messages"
+    assert events[0].category == "transport"
+    assert events[0].severity == "high"
+    assert events[0].title.startswith("Police: Færdselsuheld")
+
+
+def test_police_sync_stores_generic_messages_without_event(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
+    init_db()
+
+    rss_item = {
+        "id": "police-ritzau-short-messages:15001000",
+        "title": "Grundlovsforhør ved Retten",
+        "url": "https://via.ritzau.dk/pressemeddelelse/15001000/grundlovsforhor?lang=da",
+        "published_at": "2026-06-20T08:00:00+00:00",
+        "summary": "",
+    }
+    article = {
+        **rss_item,
+        "summary": "En person fremstilles i grundlovsforhør.",
+        "publisher": "Københavns Politi",
+        "publisher_city": "København",
+    }
+    monkeypatch.setattr("argus.ingest.police.fetch_police_rss", lambda limit: [rss_item])
+    monkeypatch.setattr("argus.ingest.police.fetch_article_details", lambda items: [article])
+
+    result = api_sync_police_short_messages()
+
+    assert result.observations_seen == 1
+    assert result.observations_stored == 1
+    assert result.events_created == 0
+    assert api_list_events() == []
 
 
 def test_electricity_sync_creates_market_stress_event(tmp_path, monkeypatch):
