@@ -15,11 +15,15 @@ Edit `.env` and set:
 
 ```bash
 ARGUS_PUBLIC_BASE_URL=https://argus.example.dk
-ARGUS_TRUSTED_HOSTS=argus.example.dk,localhost,127.0.0.1
-ARGUS_BIND_ADDRESS=127.0.0.1
+ARGUS_TRUSTED_HOSTS=*
+ARGUS_BIND_ADDRESS=0.0.0.0
 ARGUS_BIND_PORT=8088
-ARGUS_FORWARDED_ALLOW_IPS=127.0.0.1
+ARGUS_FORWARDED_ALLOW_IPS=*
 ```
+
+With those defaults, Argus is reachable on `http://<host-ip>:8088` from other
+devices on the same network. Once you deploy behind a real domain, set
+`ARGUS_TRUSTED_HOSTS` to that domain, `localhost`, and `127.0.0.1`.
 
 Use `ARGUS_ROOT_PATH=/argus` only when the proxy serves Argus under a path
 prefix instead of a dedicated domain.
@@ -62,6 +66,10 @@ Let's Encrypt/certbot workflow.
 git pull
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
+
+The helper script does this automatically with `git pull --ff-only` before
+rebuilding. Set `ARGUS_AUTO_UPDATE=false ./deploy.sh` to skip the pull for a
+single run.
 
 ## 5. Backup And Restore
 
