@@ -17,7 +17,7 @@ Edit `.env` and set:
 ARGUS_PUBLIC_BASE_URL=https://argus.example.dk
 ARGUS_TRUSTED_HOSTS=argus.example.dk,localhost,127.0.0.1
 ARGUS_BIND_ADDRESS=127.0.0.1
-ARGUS_BIND_PORT=8000
+ARGUS_BIND_PORT=8088
 ARGUS_FORWARDED_ALLOW_IPS=127.0.0.1
 ```
 
@@ -40,7 +40,7 @@ Check it:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
-curl http://127.0.0.1:8000/api/health
+curl http://127.0.0.1:8088/api/health
 ```
 
 The SQLite database is stored at `./data/argus.db` on the host.
@@ -86,5 +86,5 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml exec argus pytho
 Manual source syncs can be run from the web UI or with:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/scheduler/jobs/greenpowerdenmark-incidents/run
+curl -X POST http://127.0.0.1:8088/api/scheduler/jobs/greenpowerdenmark-incidents/run
 ```

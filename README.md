@@ -20,11 +20,11 @@ Open http://localhost:8000.
 docker compose up --build
 ```
 
-Open http://localhost:8000.
+Open http://localhost:8088.
 
 The SQLite database is stored in the `argus-data` Docker volume. Set
 `ARGUS_DB_PATH` to choose a different local path. The container publishes on
-`127.0.0.1:8000` by default; set `ARGUS_BIND_ADDRESS=0.0.0.0` only if you want
+`127.0.0.1:8088` by default; set `ARGUS_BIND_ADDRESS=0.0.0.0` only if you want
 to expose it directly without a reverse proxy.
 
 For production deployment on a host server, copy `.env.example` to `.env` and

@@ -3,10 +3,10 @@ services:
     build: .
     image: argus:local
     ports:
-      - "${ARGUS_BIND_ADDRESS:-127.0.0.1}:${ARGUS_BIND_PORT:-8000}:8000"
+      - "${ARGUS_BIND_ADDRESS:-127.0.0.1}:${ARGUS_BIND_PORT:-8088}:8000"
     environment:
       ARGUS_DB_PATH: /data/argus.db
-      ARGUS_PUBLIC_BASE_URL: ${ARGUS_PUBLIC_BASE_URL:-http://localhost:8000}
+      ARGUS_PUBLIC_BASE_URL: ${ARGUS_PUBLIC_BASE_URL:-http://localhost:8088}
       ARGUS_ROOT_PATH: ${ARGUS_ROOT_PATH:-}
       ARGUS_TRUSTED_HOSTS: ${ARGUS_TRUSTED_HOSTS:-*}
       ARGUS_PROXY_HEADERS: ${ARGUS_PROXY_HEADERS:-true}
