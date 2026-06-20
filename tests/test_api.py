@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from argus.database import connect, init_db
 from argus.ingest.evaluator import evaluate_news_relevance
-from argus.ingest.odin import parse_odin_rss
+from argus.ingest.common import DENMARK_CENTER
+from argus.ingest.odin import parse_odin_rss, station_location
 from argus.ingest.traffic import clean_traffic_text
 from argus.main import (
     api_create_event,
@@ -138,6 +139,60 @@ def test_dmi_sync_creates_weather_event(tmp_path, monkeypatch):
     assert result.events_created == 1
     assert any(event.source == "DMI metObs" for event in api_list_events())
     assert len(api_list_observations(source_id="dmi-metobs")) == 1
+
+
+def test_observations_can_be_filtered_by_station(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
+    init_db()
+
+    def fake_fetch_observations(limit: int):
+        return [
+            {
+                "type": "Feature",
+                "id": "station-a-temp-1",
+                "geometry": {"type": "Point", "coordinates": [12.5, 55.7]},
+                "properties": {
+                    "parameterId": "temp_dry",
+                    "value": 12.0,
+                    "observed": "2026-06-20T15:00:00Z",
+                    "stationId": "06123",
+                },
+            },
+            {
+                "type": "Feature",
+                "id": "station-a-temp-2",
+                "geometry": {"type": "Point", "coordinates": [12.5, 55.7]},
+                "properties": {
+                    "parameterId": "temp_dry",
+                    "value": 13.0,
+                    "observed": "2026-06-20T15:10:00Z",
+                    "stationId": "06123",
+                },
+            },
+            {
+                "type": "Feature",
+                "id": "station-b-wind-1",
+                "geometry": {"type": "Point", "coordinates": [12.1, 55.4]},
+                "properties": {
+                    "parameterId": "wind_speed",
+                    "value": 7.0,
+                    "observed": "2026-06-20T15:00:00Z",
+                    "stationId": "06124",
+                },
+            },
+        ]
+
+    monkeypatch.setattr("argus.ingest.dmi.fetch_observations", fake_fetch_observations)
+
+    api_sync_dmi_metobs()
+
+    station_observations = api_list_observations(
+        source_id="dmi-metobs",
+        station_id="06123",
+    )
+    assert len(station_observations) == 2
+    assert {item.station_id for item in station_observations} == {"06123"}
+    assert [item.value for item in station_observations] == [13.0, 12.0]
 
 
 def test_scheduler_jobs_are_returned():
@@ -500,6 +555,13 @@ def test_odin_rss_parser_uses_description_and_time_for_ids():
     assert incidents[0]["id"] != incidents[1]["id"]
     assert incidents[0]["alarm_type"] == "Brandalarm"
     assert incidents[0]["station"] == "Vesterbro"
+
+
+def test_odin_station_location_uses_station_or_city_names():
+    assert station_location("Hovedstadens Beredskab - Station Vesterbro") == (55.669, 12.544)
+    assert station_location("Brandstation Hillerød") == (55.927, 12.301)
+    assert station_location("Åsum - Odense") == (55.396, 10.463)
+    assert station_location("Ukendt Station") == DENMARK_CENTER
 
 
 def test_traffic_sync_creates_transport_event(tmp_path, monkeypatch):

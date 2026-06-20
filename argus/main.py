@@ -196,8 +196,12 @@ def api_list_sources() -> list[Source]:
 
 
 @app.get("/api/observations", response_model=list[RawObservation])
-def api_list_observations(source_id: str | None = None, limit: int = 500) -> list[RawObservation]:
-    return list_recent_observations(source_id=source_id, limit=limit)
+def api_list_observations(
+    source_id: str | None = None,
+    station_id: str | None = None,
+    limit: int = 500,
+) -> list[RawObservation]:
+    return list_recent_observations(source_id=source_id, station_id=station_id, limit=limit)
 
 
 @app.post("/api/sources/dmi-metobs/sync", response_model=IngestResult)

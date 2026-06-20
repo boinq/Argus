@@ -19,20 +19,141 @@ ENDPOINT = "http://www.odin.dk/RSS/RSS.aspx?beredskabsID=0000"
 SOURCE_URL = "http://www.odin.dk/112puls/"
 
 STATION_COORDINATES = {
+    "aalborg": (57.048, 9.919),
     "aarhus nord": (56.187, 10.197),
     "aarhus syd": (56.119, 10.158),
+    "allerod": (55.872, 12.345),
+    "ballerup": (55.731, 12.363),
+    "birkerod": (55.847, 12.429),
+    "bronderslev": (57.27, 9.941),
     "christianshavn": (55.673, 12.594),
+    "esbjerg": (55.476, 8.459),
+    "faelledvej": (55.696, 12.558),
     "feldborg/aulum": (56.326, 8.934),
+    "feldborg aulum": (56.326, 8.934),
     "frederiksberg": (55.681, 12.532),
+    "frederikshavn": (57.441, 10.537),
+    "glostrup": (55.666, 12.398),
+    "haderslev": (55.249, 9.489),
     "hedensted": (55.77, 9.702),
+    "helsingor": (56.036, 12.613),
+    "herning": (56.138, 8.967),
+    "hillerod": (55.927, 12.301),
+    "hobro": (56.638, 9.794),
+    "holbaek": (55.718, 11.704),
+    "holstebro": (56.36, 8.616),
+    "horsens": (55.861, 9.85),
     "hvidovre": (55.642, 12.475),
+    "hjorring": (57.456, 9.996),
+    "kalundborg": (55.681, 11.089),
+    "kerteminde": (55.45, 10.657),
+    "knebel": (56.205, 10.493),
     "kolding": (55.491, 9.473),
+    "koge": (55.458, 12.182),
+    "naestved": (55.229, 11.761),
     "nakskov": (54.833, 11.139),
+    "nykobing f": (54.769, 11.875),
+    "nykobing falster": (54.769, 11.875),
+    "odense": (55.403, 10.402),
+    "randers": (56.46, 10.037),
     "ringe": (55.239, 10.478),
+    "ringsted": (55.442, 11.79),
+    "roskilde": (55.641, 12.087),
+    "st lellinge": (55.481, 12.139),
+    "st roskilde": (55.641, 12.087),
+    "st store heddinge": (55.309, 12.388),
+    "st torring": (55.85, 9.48),
+    "silkeborg": (56.17, 9.545),
+    "skanderborg": (56.039, 9.927),
+    "skive": (56.567, 9.027),
     "slangerup": (55.847, 12.178),
+    "slagelse": (55.403, 11.354),
+    "sonderborg": (54.913, 9.792),
+    "svendborg": (55.06, 10.607),
+    "thisted": (56.956, 8.694),
+    "tomsgarden": (55.705, 12.531),
+    "tomsgaarden": (55.705, 12.531),
+    "torring": (55.85, 9.48),
+    "taastrup": (55.652, 12.293),
+    "varde": (55.621, 8.481),
     "vesterbro": (55.669, 12.544),
     "vejle": (55.711, 9.536),
+    "viborg": (56.452, 9.402),
+    "aalborg ost": (57.044, 10.006),
+    "aabenraa": (55.044, 9.418),
+    "aars": (56.803, 9.514),
+    "arhus nord": (56.187, 10.197),
+    "arhus syd": (56.119, 10.158),
+    "aasum odense": (55.396, 10.463),
     "åsum - odense": (55.396, 10.463),
+    "asum odense": (55.396, 10.463),
+}
+
+PLACE_COORDINATES = {
+    "aalborg": (57.048, 9.919),
+    "aarhus": (56.162, 10.203),
+    "aabenraa": (55.044, 9.418),
+    "assens": (55.27, 9.9),
+    "ballerup": (55.731, 12.363),
+    "billund": (55.73, 9.112),
+    "brondby": (55.647, 12.418),
+    "bronderslev": (57.27, 9.941),
+    "copenhagen": (55.676, 12.568),
+    "esbjerg": (55.476, 8.459),
+    "faelledvej": (55.696, 12.558),
+    "farum": (55.808, 12.36),
+    "fredericia": (55.565, 9.753),
+    "frederiksberg": (55.681, 12.532),
+    "frederikshavn": (57.441, 10.537),
+    "frederikssund": (55.84, 12.069),
+    "gladsaxe": (55.733, 12.489),
+    "glostrup": (55.666, 12.398),
+    "greve": (55.583, 12.298),
+    "haderslev": (55.249, 9.489),
+    "helsingor": (56.036, 12.613),
+    "herlev": (55.724, 12.439),
+    "herning": (56.138, 8.967),
+    "hillerod": (55.927, 12.301),
+    "hjorring": (57.456, 9.996),
+    "hobro": (56.638, 9.794),
+    "holbaek": (55.718, 11.704),
+    "holstebro": (56.36, 8.616),
+    "horsens": (55.861, 9.85),
+    "hvidovre": (55.642, 12.475),
+    "ishoj": (55.616, 12.351),
+    "kalundborg": (55.681, 11.089),
+    "kerteminde": (55.45, 10.657),
+    "knebel": (56.205, 10.493),
+    "kolding": (55.491, 9.473),
+    "koge": (55.458, 12.182),
+    "kobenhavn": (55.676, 12.568),
+    "lemvig": (56.548, 8.31),
+    "middelfart": (55.506, 9.731),
+    "naestved": (55.229, 11.761),
+    "nyborg": (55.312, 10.789),
+    "nykobing falster": (54.769, 11.875),
+    "odense": (55.403, 10.402),
+    "randers": (56.46, 10.037),
+    "ringkobing": (56.09, 8.244),
+    "ringsted": (55.442, 11.79),
+    "roskilde": (55.641, 12.087),
+    "rudersdal": (55.838, 12.476),
+    "silkeborg": (56.17, 9.545),
+    "skanderborg": (56.039, 9.927),
+    "skive": (56.567, 9.027),
+    "slagelse": (55.403, 11.354),
+    "store heddinge": (55.309, 12.388),
+    "sonderborg": (54.913, 9.792),
+    "sorø": (55.432, 11.559),
+    "soro": (55.432, 11.559),
+    "svendborg": (55.06, 10.607),
+    "taarnby": (55.63, 12.6),
+    "thisted": (56.956, 8.694),
+    "varde": (55.621, 8.481),
+    "vejen": (55.481, 9.137),
+    "vejle": (55.711, 9.536),
+    "viborg": (56.452, 9.402),
+    "vordingborg": (55.009, 11.91),
 }
 
 
@@ -154,8 +275,45 @@ def parse_station(summary: str) -> str:
 
 
 def station_location(station: str) -> tuple[float, float]:
+    normalized = normalize_station_name(station)
+    if not normalized:
+        return DENMARK_CENTER
+    if normalized in STATION_COORDINATES:
+        return STATION_COORDINATES[normalized]
+
+    for name, coordinates in sorted(
+        {**PLACE_COORDINATES, **STATION_COORDINATES}.items(),
+        key=lambda item: len(item[0]),
+        reverse=True,
+    ):
+        if re.search(rf"\b{re.escape(name)}\b", normalized):
+            return coordinates
+    return DENMARK_CENTER
+
+
+def normalize_station_name(station: str) -> str:
     normalized = station.strip().lower()
-    return STATION_COORDINATES.get(normalized, DENMARK_CENTER)
+    replacements = {
+        "æ": "ae",
+        "ø": "o",
+        "å": "aa",
+        "ä": "ae",
+        "ö": "o",
+        "ü": "u",
+    }
+    for source, target in replacements.items():
+        normalized = normalized.replace(source, target)
+    normalized = re.sub(r"\([^)]*\)", " ", normalized)
+    normalized = re.sub(r"[/,;:._-]+", " ", normalized)
+    normalized = re.sub(
+        r"\b(station|brandstation|beredskab|beredskabet|brandvaesen|brandvæsen|"
+        r"brand|redning|redningsberedskab|hovedstadens|trekantomraadets|"
+        r"midtjyllands|nordjyllands|sydjyllands|ostjyllands|østjyllands|"
+        r"vestegnen|f\b)\b",
+        " ",
+        normalized,
+    )
+    return re.sub(r"\s+", " ", normalized).strip()
 
 
 def odin_severity(alarm_type: str) -> str:

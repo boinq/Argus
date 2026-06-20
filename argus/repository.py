@@ -189,14 +189,19 @@ def list_sources() -> list[Source]:
 def list_recent_observations(
     *,
     source_id: str | None = None,
+    station_id: str | None = None,
     limit: int = 500,
 ) -> list[RawObservation]:
     limit = max(1, min(limit, 2000))
-    where = ""
+    clauses: list[str] = []
     params: list[object] = []
     if source_id:
-        where = "WHERE source_id = ?"
+        clauses.append("source_id = ?")
         params.append(source_id)
+    if station_id:
+        clauses.append("station_id = ?")
+        params.append(station_id)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     params.append(limit)
     with connect() as connection:
         rows = connection.execute(

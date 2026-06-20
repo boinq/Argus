@@ -172,16 +172,55 @@ export function markerForObservation(observation) {
   return marker;
 }
 
-function observationLabel(observation) {
-  return `${observationDisplayName(observation.parameter_id)}: ${observationValue(observation)}`;
+export function markerForObservationStation(station) {
+  const label = `DMI station ${station.station_id}`;
+  const latest = station.latest_observed_at ? formatDate(station.latest_observed_at) : "Unknown";
+  const marker = L.marker([station.latitude, station.longitude], {
+    pane: "weatherPane",
+    keyboard: true,
+    title: label,
+    icon: L.divIcon({
+      className: "weather-marker-icon",
+      html: `
+        <span class="event-marker-pin weather-marker-pin">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            ${markerIcons.weather}
+          </svg>
+        </span>
+      `,
+      iconSize: [28, 28],
+      iconAnchor: [14, 14],
+      popupAnchor: [0, -10],
+    }),
+  });
+  marker.bindPopup(`
+    <article class="weather-popup">
+      <header class="event-popup-header">
+        <span class="popup-severity weather"></span>
+        <div>
+          <p class="popup-title">${escapeHtml(label)}</p>
+          <div class="event-meta popup-meta">
+            <span class="tag">DMI</span>
+            <span class="tag">${station.observation_count} obs</span>
+          </div>
+        </div>
+      </header>
+      <dl class="popup-details">
+        ${station.parameters.map(stationParameterDetail).join("")}
+        <div>
+          <dt>Latest</dt>
+          <dd>${escapeHtml(latest)}</dd>
+        </div>
+      </dl>
+      <button class="popup-action" type="button" data-popup-station-id="${escapeHtml(station.station_id)}">
+        Station history
+      </button>
+    </article>
+  `);
+  return marker;
 }
 
-function observationValue(observation) {
-  const unit = observationUnit(observation.parameter_id);
-  return `${Number(observation.value).toFixed(1)}${unit ? ` ${unit}` : ""}`;
-}
-
-function observationDisplayName(parameterId) {
+export function observationDisplayName(parameterId) {
   const labels = {
     temp_dry: "Temperature",
     wind_speed: "Wind speed",
@@ -189,6 +228,15 @@ function observationDisplayName(parameterId) {
     precip_past10min: "Precipitation",
   };
   return labels[parameterId] || parameterId;
+}
+
+export function observationValue(observation) {
+  const unit = observationUnit(observation.parameter_id);
+  return `${Number(observation.value).toFixed(1)}${unit ? ` ${unit}` : ""}`;
+}
+
+function observationLabel(observation) {
+  return `${observationDisplayName(observation.parameter_id)}: ${observationValue(observation)}`;
 }
 
 function observationUnit(parameterId) {
@@ -199,4 +247,13 @@ function observationUnit(parameterId) {
     precip_past10min: "mm / 10 min",
   };
   return units[parameterId] || "";
+}
+
+function stationParameterDetail(observation) {
+  return `
+    <div>
+      <dt>${escapeHtml(observationDisplayName(observation.parameter_id))}</dt>
+      <dd>${escapeHtml(observationValue(observation))}</dd>
+    </div>
+  `;
 }

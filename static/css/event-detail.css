@@ -66,6 +66,10 @@
   text-transform: uppercase;
 }
 
+.weather-detail {
+  --detail-color: #8fb8ff;
+}
+
 .detail-tags {
   margin-bottom: 0;
 }
@@ -138,6 +142,14 @@
 .detail-grid dd {
   color: #d7e1e4;
   overflow-wrap: anywhere;
+}
+
+.detail-grid dd small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
 }
 
 .detail-grid a {
@@ -215,4 +227,48 @@
   font-size: 0.72rem;
   line-height: 1.45;
   white-space: pre-wrap;
+}
+
+.station-history {
+  display: grid;
+  gap: 7px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.station-history-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(90px, 0.7fr) minmax(74px, 0.5fr);
+  gap: 8px;
+  align-items: center;
+  padding: 8px 9px;
+  background: #20292f;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+.station-history-row span,
+.station-history-row strong,
+.station-history-row em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.74rem;
+  line-height: 1.25;
+}
+
+.station-history-row span {
+  color: var(--muted);
+}
+
+.station-history-row strong {
+  color: var(--text);
+}
+
+.station-history-row em {
+  color: #d7e1e4;
+  font-style: normal;
+  font-weight: 900;
+  text-align: right;
 }

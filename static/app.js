@@ -1,6 +1,6 @@
 import { createMarkerLayer, setupMap } from "./js/map.js";
 import { eventDetailHtml } from "./js/event-detail.js";
-import { markerFor, markerForObservation } from "./js/markers.js";
+import { markerFor, markerForObservationStation } from "./js/markers.js";
 import { renderReports as renderReportsPanel, reportEvents as filterReportEvents } from "./js/reports-panel.js";
 import {
   fillSettings,
@@ -11,6 +11,7 @@ import {
   renderSources as renderSourcesPanel,
   renderSourceSyncTargets as renderSyncTargets,
 } from "./js/sources-panel.js";
+import { stationDetailHtml, stationDetailLoadingHtml } from "./js/station-detail.js";
 import {
   categoryLabel,
   escapeHtml,
@@ -74,7 +75,9 @@ const eventDetailBody = document.querySelector("#event-detail-body");
 let sources = [];
 let schedulerJobs = [];
 let observations = [];
+let observationStations = [];
 let dataMarkers = [];
+let activeStationId = null;
 let knownLayerCategories = new Set();
 let knownLayerSources = new Set();
 let enabledLayerCategories = new Set();
@@ -186,7 +189,7 @@ function renderMap(items) {
   }
 
   if (shouldShowObservationLayer()) {
-    renderObservationLayer(observations);
+    renderObservationLayer(observationStations);
   } else {
     clearObservationLayer();
   }
@@ -215,7 +218,7 @@ function renderLayerControls(visibleEventCount = markers.size) {
   syncLayerSelections();
   const categories = [...knownLayerCategories].sort();
   const eventSources = [...knownLayerSources].sort();
-  const observationCount = shouldShowObservationLayer() ? observations.length : 0;
+  const observationCount = shouldShowObservationLayer() ? observationStations.length : 0;
   layerCount.textContent = `${visibleEventCount + observationCount} shown`;
   categoryLayerOptions.innerHTML = categories
     .map((category) =>
@@ -261,13 +264,15 @@ function renderObservationLayer(items) {
   if (!map.hasLayer(observationMarkerLayer)) {
     observationMarkerLayer.addTo(map);
   }
-  dataMarkers = items.map((observation) => {
-    const marker = markerForObservation(observation);
+  dataMarkers = items.map((station) => {
+    const marker = markerForObservationStation(station);
     const openObservation = () => {
-      map.panTo([observation.latitude, observation.longitude], { animate: true });
+      map.panTo([station.latitude, station.longitude], { animate: true });
       marker.openPopup();
+      renderStationDetail(station);
     };
     marker.on("click", openObservation);
+    marker.on("popupopen", () => bindStationPopupAction(marker));
     marker.on("keypress", (event) => {
       if (event.originalEvent.key === "Enter" || event.originalEvent.key === " ") {
         openObservation();
@@ -372,13 +377,52 @@ function bindPopupAction(marker) {
   };
 }
 
+function bindStationPopupAction(marker) {
+  const element = marker.getPopup()?.getElement();
+  const button = element?.querySelector("[data-popup-station-id]");
+  if (!button) {
+    return;
+  }
+  button.onclick = () => {
+    const station = observationStations.find((item) => item.station_id === button.dataset.popupStationId);
+    if (station) {
+      renderStationDetail(station);
+    }
+  };
+}
+
 function renderEventDetail(event) {
+  activeStationId = null;
   eventDetailBody.innerHTML = eventDetailHtml(event, { events, sources });
   eventDetailDrawer.hidden = false;
 }
 
 function closeEventDetail() {
   eventDetailDrawer.hidden = true;
+  activeStationId = null;
+}
+
+async function renderStationDetail(station) {
+  activeEventId = null;
+  activeStationId = station.station_id;
+  eventDetailBody.innerHTML = stationDetailLoadingHtml(station);
+  eventDetailDrawer.hidden = false;
+  try {
+    const response = await fetch(
+      `api/observations?source_id=dmi-metobs&station_id=${encodeURIComponent(station.station_id)}&limit=2000`,
+    );
+    if (!response.ok) {
+      throw new Error(`Observations API responded with ${response.status}`);
+    }
+    const history = await response.json();
+    eventDetailBody.innerHTML = stationDetailHtml(station, history);
+  } catch (error) {
+    eventDetailBody.innerHTML = stationDetailHtml(station, []);
+    const note = document.createElement("p");
+    note.className = "settings-note error";
+    note.textContent = error.message;
+    eventDetailBody.appendChild(note);
+  }
 }
 
 function focusActiveEvent() {
@@ -386,6 +430,26 @@ function focusActiveEvent() {
     return;
   }
   setActiveEvent(activeEventId, true);
+}
+
+function focusStation(stationId) {
+  const station = observationStations.find((item) => item.station_id === stationId);
+  if (!station) {
+    return;
+  }
+  map.setView([station.latitude, station.longitude], Math.max(map.getZoom(), 9), {
+    animate: true,
+  });
+}
+
+async function refreshActiveStationDetail() {
+  if (!activeStationId) {
+    return;
+  }
+  const station = observationStations.find((item) => item.station_id === activeStationId);
+  if (station) {
+    await renderStationDetail(station);
+  }
 }
 
 function showActiveEventInFeed() {
@@ -481,14 +545,15 @@ async function loadSources() {
 
 async function loadObservations() {
   try {
-    const response = await fetch("api/observations?source_id=dmi-metobs&limit=500");
+    const response = await fetch("api/observations?source_id=dmi-metobs&limit=2000");
     if (!response.ok) {
       throw new Error(`Observations API responded with ${response.status}`);
     }
     observations = await response.json();
+    observationStations = groupObservationStations(observations);
     observationNote.textContent =
-      observations.length > 0
-        ? `${observations.length} recent DMI observations plotted on the map.`
+      observationStations.length > 0
+        ? `${observationStations.length} DMI stations plotted from ${observations.length} recent observations.`
         : "No DMI observations stored yet.";
     observationNote.classList.remove("error");
     if (shouldShowObservationLayer()) {
@@ -496,10 +561,51 @@ async function loadObservations() {
     } else {
       renderLayerControls(markers.size);
     }
+    await refreshActiveStationDetail();
   } catch (error) {
     observationNote.textContent = error.message;
     observationNote.classList.add("error");
   }
+}
+
+function groupObservationStations(items) {
+  const stations = new Map();
+  items.forEach((observation) => {
+    const existing = stations.get(observation.station_id) || {
+      station_id: observation.station_id,
+      latitude: observation.latitude,
+      longitude: observation.longitude,
+      latest_observed_at: observation.observed_at,
+      observation_count: 0,
+      parametersById: new Map(),
+    };
+    existing.observation_count += 1;
+    if (new Date(observation.observed_at) > new Date(existing.latest_observed_at)) {
+      existing.latest_observed_at = observation.observed_at;
+      existing.latitude = observation.latitude;
+      existing.longitude = observation.longitude;
+    }
+
+    const currentParameter = existing.parametersById.get(observation.parameter_id);
+    if (
+      !currentParameter ||
+      new Date(observation.observed_at) > new Date(currentParameter.observed_at)
+    ) {
+      existing.parametersById.set(observation.parameter_id, observation);
+    }
+    stations.set(observation.station_id, existing);
+  });
+
+  return [...stations.values()].map((station) => ({
+    station_id: station.station_id,
+    latitude: station.latitude,
+    longitude: station.longitude,
+    latest_observed_at: station.latest_observed_at,
+    observation_count: station.observation_count,
+    parameters: [...station.parametersById.values()].sort((a, b) =>
+      a.parameter_id.localeCompare(b.parameter_id),
+    ),
+  }));
 }
 
 async function syncSelectedSource() {
@@ -685,9 +791,15 @@ eventDetailDrawer.addEventListener("click", (event) => {
     focusActiveEvent();
   } else if (action === "feed") {
     showActiveEventInFeed();
+  } else if (action === "focus-station") {
+    focusStation(activeStationId);
+  } else if (action === "refresh-station") {
+    refreshActiveStationDetail();
   } else if (action === "toggle-raw") {
     const raw = eventDetailDrawer.querySelector("#event-detail-raw");
-    raw.hidden = !raw.hidden;
+    if (raw) {
+      raw.hidden = !raw.hidden;
+    }
   }
 });
 document.addEventListener("keydown", (event) => {
