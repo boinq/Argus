@@ -1,0 +1,1 @@
+"""Argus hazardous event monitor."""

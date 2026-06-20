@@ -1,0 +1,13 @@
+services:
+  argus:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      ARGUS_DB_PATH: /data/argus.db
+    volumes:
+      - argus-data:/data
+    restart: unless-stopped
+
+volumes:
+  argus-data:

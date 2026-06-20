@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Argus Denmark Hazard Monitor</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIINfQngD8nM1xJfyw18mTd6fL7uJkKc9RE="
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="map-panel" aria-label="Satellite map of Denmark">
+        <div id="map"></div>
+        <button
+          class="menu-toggle"
+          id="menu-toggle"
+          type="button"
+          aria-label="Open menu"
+          aria-controls="side-menu"
+          aria-expanded="false"
+        >
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
+        <nav class="side-menu" id="side-menu" aria-label="Main menu" aria-hidden="true">
+          <div class="menu-header">
+            <p class="eyebrow">Argus</p>
+            <h2>Operations</h2>
+          </div>
+          <button type="button" class="menu-item active">Map</button>
+          <button type="button" class="menu-item">Sensors</button>
+          <button type="button" class="menu-item">Alerts</button>
+          <button type="button" class="menu-item">Sources</button>
+          <button type="button" class="menu-item">Reports</button>
+          <button type="button" class="menu-item">Settings</button>
+        </nav>
+        <div class="menu-scrim" id="menu-scrim" hidden></div>
+        <div class="topbar">
+          <div>
+            <p class="eyebrow">Argus</p>
+            <h1>Denmark Hazard Monitor</h1>
+          </div>
+          <div class="status-pill" id="api-status">Connecting</div>
+        </div>
+        <div class="legend" aria-label="Severity legend">
+          <span><i class="severity critical"></i>Critical</span>
+          <span><i class="severity high"></i>High</span>
+          <span><i class="severity medium"></i>Medium</span>
+          <span><i class="severity low"></i>Low</span>
+        </div>
+      </section>
+
+      <aside class="event-panel" aria-label="Hazard event feed">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Live Feed</p>
+            <h2>Events</h2>
+          </div>
+          <select id="category-filter" aria-label="Filter by category">
+            <option value="all">All</option>
+            <option value="weather">Weather</option>
+            <option value="hybrid">Hybrid</option>
+            <option value="electrical">Electrical</option>
+            <option value="food">Food</option>
+            <option value="health">Health</option>
+            <option value="transport">Transport</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="summary-grid" id="summary"></div>
+        <div class="event-list" id="event-list"></div>
+      </aside>
+    </main>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
