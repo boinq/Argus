@@ -1,0 +1,189 @@
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  color: var(--text);
+  background: #151b20;
+}
+
+.leaflet-popup-content {
+  min-width: 270px;
+  max-width: 320px;
+  margin: 14px;
+}
+
+.event-popup,
+.weather-popup {
+  display: grid;
+  gap: 10px;
+}
+
+.event-marker-icon,
+.weather-marker-icon {
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.event-marker-pin {
+  --marker-color: var(--accent);
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  color: #f9ffff;
+  background:
+    radial-gradient(circle at 34% 28%, rgba(255, 255, 255, 0.24), transparent 34%),
+    #101820;
+  border: 3px solid var(--marker-color);
+  border-radius: 999px;
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.88),
+    0 10px 22px rgba(0, 0, 0, 0.42),
+    0 0 18px color-mix(in srgb, var(--marker-color) 62%, transparent);
+  transition:
+    transform 120ms ease,
+    filter 120ms ease;
+}
+
+.event-marker-icon svg,
+.weather-marker-icon svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.event-marker-icon.event-marker-electrical svg,
+.event-marker-icon.event-marker-emergency svg {
+  fill: currentColor;
+  stroke-width: 1.4;
+}
+
+.weather-marker-pin {
+  --marker-color: #8fb8ff;
+  width: 28px;
+  height: 28px;
+}
+
+.event-marker-icon:hover .event-marker-pin,
+.weather-marker-icon:hover .event-marker-pin {
+  transform: scale(1.18);
+  filter: brightness(1.08);
+}
+
+.argus-cluster {
+  display: grid;
+  place-items: center;
+}
+
+.argus-cluster-badge {
+  --cluster-color: var(--accent);
+  display: grid;
+  place-items: center;
+  color: #f9ffff;
+  background:
+    radial-gradient(circle at 34% 28%, rgba(255, 255, 255, 0.24), transparent 36%),
+    #101820;
+  border: 4px solid var(--cluster-color);
+  border-radius: 999px;
+  box-shadow:
+    0 0 0 3px rgba(255, 255, 255, 0.88),
+    0 12px 26px rgba(0, 0, 0, 0.46),
+    0 0 24px color-mix(in srgb, var(--cluster-color) 58%, transparent);
+  font-size: 0.9rem;
+  font-weight: 1000;
+}
+
+.argus-cluster-observation .argus-cluster-badge {
+  color: #061018;
+  background:
+    radial-gradient(circle at 34% 28%, rgba(255, 255, 255, 0.55), transparent 36%),
+    #8fb8ff;
+  border-color: #dbe8ff;
+}
+
+.event-popup-header {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.popup-severity {
+  display: block;
+  width: 10px;
+  height: 100%;
+  min-height: 44px;
+  border-radius: 999px;
+}
+
+.popup-severity.weather {
+  background: #8fb8ff;
+}
+
+.popup-title {
+  margin: 0 0 8px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.popup-copy {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.popup-meta {
+  margin: 0;
+}
+
+.popup-meta .tag {
+  font-size: 0.64rem;
+  padding: 3px 6px;
+}
+
+.popup-details {
+  display: grid;
+  gap: 7px;
+  margin: 2px 0 0;
+}
+
+.popup-details div {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.popup-details dt,
+.popup-details dd {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.popup-details dt {
+  color: var(--muted);
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.popup-details dd {
+  overflow-wrap: anywhere;
+}
+
+.popup-action {
+  width: 100%;
+  min-height: 34px;
+  color: #06110f;
+  background: var(--accent);
+  border: 0;
+  border-radius: 7px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.popup-action:hover {
+  filter: brightness(1.08);
+}

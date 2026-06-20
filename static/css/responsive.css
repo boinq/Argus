@@ -1,0 +1,69 @@
+@media (max-width: 900px) {
+  .shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: 62vh auto;
+  }
+
+  .map-panel {
+    min-height: 62vh;
+  }
+
+  .event-panel {
+    height: auto;
+    min-height: 38vh;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+
+  .topbar {
+    align-items: flex-start;
+  }
+
+  .layer-control {
+    top: auto;
+    right: 12px;
+    bottom: 70px;
+    width: min(310px, calc(100% - 24px));
+    max-height: 34vh;
+  }
+}
+
+@media (max-width: 560px) {
+  .topbar {
+    left: 68px;
+    right: 12px;
+    top: 12px;
+    flex-direction: column;
+  }
+
+  .menu-toggle {
+    left: 12px;
+    top: 12px;
+  }
+
+  .legend {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+  }
+
+  .layer-control {
+    left: 12px;
+    right: 12px;
+    bottom: 72px;
+    width: auto;
+    max-height: 30vh;
+  }
+
+  .event-panel {
+    padding: 16px;
+  }
+
+  .summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .report-toolbar {
+    grid-template-columns: 1fr;
+  }
+}
