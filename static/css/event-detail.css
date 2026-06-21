@@ -229,46 +229,116 @@
   white-space: pre-wrap;
 }
 
-.station-history {
+.station-charts {
   display: grid;
-  gap: 7px;
-  max-height: 280px;
-  overflow-y: auto;
+  gap: 10px;
 }
 
-.station-history-row {
+.station-chart-card {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(90px, 0.7fr) minmax(74px, 0.5fr);
   gap: 8px;
-  align-items: center;
-  padding: 8px 9px;
+  padding: 10px;
   background: #20292f;
   border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.station-chart-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.station-chart-header h4 {
+  margin: 0 0 2px;
+  font-size: 0.9rem;
+  line-height: 1.2;
+}
+
+.station-chart-header p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.station-chart-header strong {
+  flex: 0 0 auto;
+  color: #d7e1e4;
+  font-size: 0.82rem;
+  text-align: right;
+}
+
+.station-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 124px;
+  background: #10171b;
+  border: 1px solid rgba(62, 77, 84, 0.65);
   border-radius: 7px;
 }
 
-.station-history-row span,
-.station-history-row strong,
-.station-history-row em {
+.station-chart-axis {
+  stroke: rgba(215, 225, 228, 0.2);
+  stroke-width: 1;
+}
+
+.station-chart-label {
+  fill: var(--muted);
+  font-size: 8px;
+  font-weight: 800;
+}
+
+.station-chart-line {
+  fill: none;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.station-chart-area {
+  opacity: 0.16;
+}
+
+.station-chart-dot {
+  stroke: #10171b;
+  stroke-width: 1;
+}
+
+.station-chart-bar {
+  opacity: 0.78;
+}
+
+.station-chart-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+}
+
+.station-chart-stats div {
   min-width: 0;
+}
+
+.station-chart-stats dt,
+.station-chart-stats dd {
+  margin: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.74rem;
+  font-size: 0.68rem;
   line-height: 1.25;
 }
 
-.station-history-row span {
+.station-chart-stats dt {
   color: var(--muted);
-}
-
-.station-history-row strong {
-  color: var(--text);
-}
-
-.station-history-row em {
-  color: #d7e1e4;
-  font-style: normal;
   font-weight: 900;
-  text-align: right;
+  text-transform: uppercase;
+}
+
+.station-chart-stats dd {
+  color: #d7e1e4;
+  font-weight: 900;
 }

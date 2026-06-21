@@ -90,6 +90,12 @@ const layersNone = document.querySelector("#layers-none");
 const observationLayerToggle = document.querySelector("#observation-layer-toggle");
 const categoryLayerOptions = document.querySelector("#category-layer-options");
 const sourceLayerOptions = document.querySelector("#source-layer-options");
+const timelineRange = document.querySelector("#timeline-range");
+const timelineLabel = document.querySelector("#timeline-label");
+const timelineReset = document.querySelector("#timeline-reset");
+const timelineStart = document.querySelector("#timeline-start");
+const timelineEnd = document.querySelector("#timeline-end");
+const timelineWindowButtons = document.querySelectorAll("[data-timeline-window]");
 const eventDetailDrawer = document.querySelector("#event-detail-drawer");
 const eventDetailBody = document.querySelector("#event-detail-body");
 let sources = [];
@@ -107,6 +113,10 @@ let sourceCountdownTimer = null;
 let mlOverview = null;
 let mlCandidates = [];
 let mlTerms = [];
+let timelineValue = null;
+let timelineWindowStart = null;
+let timelineWindowDays = null;
+let timelineBounds = null;
 
 const settingsElements = {
   publicBaseUrl,
@@ -141,9 +151,126 @@ const sourceSyncElements = {
 
 function filteredEvents() {
   const category = categoryFilter.value;
+  const timeItems = timelineFilteredEvents(events);
   return category === "all"
-    ? events
-    : events.filter((event) => event.category === category);
+    ? timeItems
+    : timeItems.filter((event) => event.category === category);
+}
+
+function timelineFilteredEvents(items) {
+  if (timelineWindowStart !== null && timelineBounds) {
+    return items.filter((event) => eventOverlapsRange(event, timelineWindowStart, timelineBounds.max));
+  }
+  if (timelineValue === null) {
+    return items;
+  }
+  return items.filter((event) => eventActiveAt(event, timelineValue));
+}
+
+function eventActiveAt(event, timestamp) {
+  const startsAt = Date.parse(event.starts_at);
+  if (!Number.isFinite(startsAt) || startsAt > timestamp) {
+    return false;
+  }
+  const endsAt = event.ends_at ? Date.parse(event.ends_at) : Number.POSITIVE_INFINITY;
+  return !Number.isFinite(endsAt) || endsAt >= timestamp;
+}
+
+function eventOverlapsRange(event, startTimestamp, endTimestamp) {
+  const startsAt = Date.parse(event.starts_at);
+  if (!Number.isFinite(startsAt)) {
+    return false;
+  }
+  const endsAt = event.ends_at ? Date.parse(event.ends_at) : Number.POSITIVE_INFINITY;
+  return startsAt <= endTimestamp && endsAt >= startTimestamp;
+}
+
+function eventContributesToTimelineBounds(event) {
+  const source = String(event.source || "").toLowerCase();
+  return event.category !== "maritime" && !source.includes("maritime") && !source.includes("niord");
+}
+
+function timelineRangeEvents() {
+  const rangeEvents = events.filter(eventContributesToTimelineBounds);
+  const sourceEvents = rangeEvents.length ? rangeEvents : events;
+  const startTimestamps = sourceEvents
+    .map((event) => Date.parse(event.starts_at))
+    .filter((value) => Number.isFinite(value));
+  if (startTimestamps.length === 0) {
+    return null;
+  }
+  const endTimestamps = sourceEvents
+    .map((event) => Date.parse(event.ends_at || event.starts_at))
+    .filter((value) => Number.isFinite(value));
+  return {
+    min: Math.min(...startTimestamps),
+    max: Math.max(...endTimestamps, ...startTimestamps),
+  };
+}
+
+function syncTimelineControl() {
+  if (!timelineRange || !timelineLabel || !timelineStart || !timelineEnd || !timelineReset) {
+    return;
+  }
+  timelineBounds = timelineRangeEvents();
+  if (!timelineBounds) {
+    timelineValue = null;
+    timelineWindowStart = null;
+    timelineWindowDays = null;
+    timelineRange.disabled = true;
+    timelineRange.min = "0";
+    timelineRange.max = "0";
+    timelineRange.value = "0";
+    timelineLabel.textContent = "All time";
+    timelineStart.textContent = "No events";
+    timelineEnd.textContent = "No events";
+    timelineReset.disabled = true;
+    timelineWindowButtons.forEach((button) => {
+      button.classList.remove("active");
+      button.disabled = true;
+    });
+    return;
+  }
+
+  if (timelineValue !== null) {
+    timelineValue = Math.min(Math.max(timelineValue, timelineBounds.min), timelineBounds.max);
+  }
+  if (timelineWindowStart !== null) {
+    timelineWindowStart = Math.min(Math.max(timelineWindowStart, timelineBounds.min), timelineBounds.max);
+  }
+
+  timelineRange.disabled = false;
+  timelineRange.min = String(timelineBounds.min);
+  timelineRange.max = String(timelineBounds.max);
+  timelineRange.value = String(timelineValue ?? timelineWindowStart ?? timelineBounds.max);
+  timelineLabel.textContent = timelineLabelText();
+  timelineStart.textContent = formatDate(new Date(timelineBounds.min).toISOString());
+  timelineEnd.textContent = formatDate(new Date(timelineBounds.max).toISOString());
+  timelineReset.disabled = timelineValue === null && timelineWindowStart === null;
+  timelineWindowButtons.forEach((button) => {
+    const days = Number(button.dataset.timelineWindow);
+    button.classList.toggle("active", timelineWindowDays === days);
+    button.disabled = !timelineBounds;
+  });
+}
+
+function timelineLabelText() {
+  if (timelineWindowStart !== null && timelineBounds) {
+    return `Since ${formatDate(new Date(timelineWindowStart).toISOString())}`;
+  }
+  return timelineValue === null ? "All time" : formatDate(new Date(timelineValue).toISOString());
+}
+
+function timelineWindowStartForDays(days) {
+  if (!timelineBounds || !Number.isFinite(days)) {
+    return null;
+  }
+  const duration = days * 24 * 60 * 60 * 1000;
+  return Math.max(timelineBounds.min, timelineBounds.max - duration);
+}
+
+function currentEventPool() {
+  return timelineFilteredEvents(events);
 }
 
 function mapLayerEvents(items) {
@@ -159,7 +286,7 @@ function currentMapBaseEvents() {
     return reportEvents();
   }
   if (activeView === "sources") {
-    return events;
+    return currentEventPool();
   }
   return filteredEvents();
 }
@@ -244,6 +371,7 @@ function renderLayerControls(visibleEventCount = markers.size) {
   syncLayerSelections();
   const categories = [...knownLayerCategories].sort();
   const eventSources = [...knownLayerSources].sort();
+  const layerCountBase = currentEventPool();
   const observationCount = shouldShowObservationLayer() ? observationStations.length : 0;
   layerCount.textContent = `${visibleEventCount + observationCount} shown`;
   categoryLayerOptions.innerHTML = categories
@@ -253,7 +381,7 @@ function renderLayerControls(visibleEventCount = markers.size) {
         value: category,
         label: categoryLabel(category),
         checked: enabledLayerCategories.has(category),
-        count: events.filter((event) => event.category === category).length,
+        count: layerCountBase.filter((event) => event.category === category).length,
       }),
     )
     .join("");
@@ -264,7 +392,7 @@ function renderLayerControls(visibleEventCount = markers.size) {
         value: source,
         label: source,
         checked: enabledLayerSources.has(source),
-        count: events.filter((event) => event.source === source).length,
+        count: layerCountBase.filter((event) => event.source === source).length,
       }),
     )
     .join("");
@@ -501,6 +629,7 @@ function refreshActiveEventDetail() {
 }
 
 function render() {
+  syncTimelineControl();
   const items = filteredEvents();
   renderSummary(items);
   renderMap(mapLayerEvents(currentMapBaseEvents()));
@@ -837,6 +966,10 @@ async function resetDatabaseFromSettings() {
       throw new Error(`API responded with ${response.status}`);
     }
     events = [];
+    timelineValue = null;
+    timelineWindowStart = null;
+    timelineWindowDays = null;
+    timelineBounds = null;
     observations = [];
     observationStations = [];
     sources = [];
@@ -861,14 +994,14 @@ async function resetDatabaseFromSettings() {
 }
 
 function reportEvents() {
-  return filterReportEvents(events, {
+  return filterReportEvents(currentEventPool(), {
     scope: reportScope.value,
     category: reportCategory.value,
   });
 }
 
 function renderReports() {
-  renderReportsPanel(events, reportElements);
+  renderReportsPanel(currentEventPool(), reportElements);
 }
 
 function renderSources() {
@@ -977,6 +1110,32 @@ reportCategory.addEventListener("change", () => {
   renderMap(mapLayerEvents(currentMapBaseEvents()));
 });
 refreshReport.addEventListener("click", loadEvents);
+timelineRange.addEventListener("input", () => {
+  timelineValue = Number(timelineRange.value);
+  timelineWindowStart = null;
+  timelineWindowDays = null;
+  syncTimelineControl();
+  render();
+});
+timelineWindowButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    const days = Number(button.dataset.timelineWindow);
+    const start = timelineWindowStartForDays(days);
+    if (start === null) {
+      return;
+    }
+    timelineValue = null;
+    timelineWindowStart = start;
+    timelineWindowDays = days;
+    render();
+  });
+});
+timelineReset.addEventListener("click", () => {
+  timelineValue = null;
+  timelineWindowStart = null;
+  timelineWindowDays = null;
+  render();
+});
 mlRefresh.addEventListener("click", loadMl);
 mlSourceFilter.addEventListener("change", loadMl);
 mlScoreButton.addEventListener("click", scoreMlText);
