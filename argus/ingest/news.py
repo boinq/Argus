@@ -19,7 +19,7 @@ from argus.repository import (
 
 
 SOURCE_ID = "dr-news"
-ENDPOINT = "https://www.dr.dk/nyheder/service/feeds/allenyheder"
+ENDPOINT = "https://www.dr.dk/nyheder/service/feeds/indland"
 
 
 def sync_news(limit: int = 40) -> IngestResult:

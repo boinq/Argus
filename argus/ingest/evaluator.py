@@ -4,6 +4,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from argus.ml import as_category, as_severity, classify_category, classify_severity
 from argus.repository import list_classification_terms
 
 
@@ -21,6 +22,12 @@ def evaluate_news_relevance(title: str, summary: str = "") -> Evaluation | None:
         return None
 
     category, category_score, category_reasons = best_category(text)
+    ml_category = classify_category(text)
+    if ml_category and (category is None or ml_category.confidence >= 0.65):
+        category = as_category(ml_category.label)
+        category_score = max(category_score, round(ml_category.confidence * 6))
+        category_reasons = [f"ml:{reason}" for reason in ml_category.reasons]
+
     if category is None:
         return None
 
@@ -38,7 +45,12 @@ def evaluate_news_relevance(title: str, summary: str = "") -> Evaluation | None:
     if score < 5:
         return None
 
-    severity = "high" if score >= 8 or "kritisk" in impact_reasons else "medium"
+    ml_severity = classify_severity(text)
+    severity = "high" if score >= 8 else "medium"
+    if ml_severity and ml_severity.confidence >= 0.55:
+        severity = as_severity(ml_severity.label)
+    if severity == "low":
+        return None
     return Evaluation(
         category=category,
         severity=severity,

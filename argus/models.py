@@ -130,3 +130,16 @@ class SchedulerJobStatus(BaseModel):
     next_run_at: datetime | None = None
     last_result: str | None = None
     last_error: str | None = None
+
+
+class MLScoreRequest(BaseModel):
+    text: str = Field(min_length=3, max_length=3000)
+
+
+class PromoteTermRequest(BaseModel):
+    source_id: str = Field(min_length=2, max_length=120)
+    rule_group: str = Field(min_length=2, max_length=80)
+    term: str = Field(min_length=2, max_length=160)
+    category: str = Field(default="", max_length=80)
+    severity: str = Field(default="", max_length=20)
+    score: int = Field(default=1, ge=0, le=20)

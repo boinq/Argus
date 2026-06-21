@@ -8,16 +8,19 @@ from xml.etree import ElementTree
 
 import httpx
 
+from argus.geocoding import geocode_danish_place
 from argus.ingest.common import clean_html, clean_id, parse_feed_datetime
 from argus.models import EventCreate, IngestResult
 from argus.repository import (
     delete_events_by_source,
     find_location_alias,
+    get_fallback_location,
     insert_raw_article,
     list_location_aliases,
     list_classification_terms,
     record_location_candidate,
     update_source_status,
+    upsert_location_alias,
     upsert_event,
 )
 
@@ -154,13 +157,53 @@ def station_location(station: str) -> tuple[float, float] | None:
     normalized = normalize_station_name(station)
     if not normalized:
         return None
-    return resolve_location(normalized, kinds=("station", "place"))
+    location = resolve_location(normalized, kinds=("station", "place"))
+    if location is not None:
+        return location
+    location = geocode_station_name(station, normalized)
+    if location is None:
+        return None
+    latitude, longitude = location
+    upsert_location_alias(
+        kind="station",
+        name=station,
+        latitude=latitude,
+        longitude=longitude,
+        source="learned",
+    )
+    return location
+
+
+def geocode_station_name(station: str, normalized: str) -> tuple[float, float] | None:
+    for query in station_geocode_queries(station, normalized):
+        location = geocode_danish_place(query)
+        if location is not None:
+            return location
+    return None
+
+
+def station_geocode_queries(station: str, normalized: str) -> list[str]:
+    queries: list[str] = []
+    for value in (station, normalized):
+        cleaned = " ".join(value.split())
+        if cleaned and cleaned not in queries:
+            queries.append(cleaned)
+        before_plus = re.sub(r"\s*\+.*$", "", cleaned).strip()
+        if before_plus and before_plus not in queries:
+            queries.append(before_plus)
+        without_prefix = re.sub(r"^st\.?\s+", "", before_plus, flags=re.IGNORECASE).strip()
+        if without_prefix and without_prefix not in queries:
+            queries.append(without_prefix)
+        expanded = re.sub(r"^nyk\.?\s+", "Nykøbing ", before_plus, flags=re.IGNORECASE).strip()
+        if expanded and expanded not in queries:
+            queries.append(expanded)
+    return queries
 
 
 def incident_location(incident: dict[str, Any]) -> tuple[float, float] | None:
     station = str(incident.get("station") or "")
     station_normalized = normalize_station_name(station)
-    location = resolve_location(station_normalized, kinds=("station", "place"))
+    location = station_location(station)
     if location is not None:
         return location
 
@@ -188,7 +231,7 @@ def incident_location(incident: dict[str, Any]) -> tuple[float, float] | None:
             normalized_name=beredskab_normalized,
             context=context,
         )
-    return None
+    return get_fallback_location()
 
 
 def beredskab_location(name: str) -> tuple[float, float] | None:

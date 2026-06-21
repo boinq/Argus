@@ -6,9 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from argus.database import connect, init_db
-from argus.models import EventCreate
 from argus.repository import (
-    learn_terms_from_event,
     record_classification_term_candidates_in_connection,
     upsert_location_alias,
     upsert_location_alias_in_connection,
@@ -29,8 +27,8 @@ def main() -> None:
     init_db()
     result = migrate_knowledge()
     print(
-        f"events={result['events']} articles={result['articles']} observations={result['observations']} "
-        f"active_terms={result['active_terms']} term_candidates={result['term_candidates']} "
+        f"articles={result['articles']} observations={result['observations']} "
+        f"term_candidates={result['term_candidates']} "
         f"location_aliases={result['location_aliases']}"
     )
 
@@ -38,13 +36,8 @@ def main() -> None:
 def migrate_knowledge() -> dict[str, int]:
     article_rows = raw_articles()
     observation_rows = raw_observations()
-    event_rows = events()
     term_candidates_before = count_rows("classification_term_candidates")
-    active_terms_before = count_rows("classification_terms")
     location_aliases_before = count_rows("location_aliases")
-
-    for event in event_rows:
-        learn_terms_from_event(EventCreate.model_validate(event))
 
     with connect() as connection:
         now = datetime.now(timezone.utc).isoformat()
@@ -69,26 +62,11 @@ def migrate_knowledge() -> dict[str, int]:
             )
 
     return {
-        "events": len(event_rows),
         "articles": len(article_rows),
         "observations": len(observation_rows),
-        "active_terms": count_rows("classification_terms") - active_terms_before,
         "term_candidates": count_rows("classification_term_candidates") - term_candidates_before,
         "location_aliases": count_rows("location_aliases") - location_aliases_before,
     }
-
-
-def events() -> list[dict[str, Any]]:
-    with connect() as connection:
-        rows = connection.execute(
-            """
-            SELECT title, category, severity, status, source, description,
-                   latitude, longitude, starts_at, ends_at
-            FROM events
-            ORDER BY updated_at, id
-            """
-        ).fetchall()
-    return [dict(row) for row in rows]
 
 
 def raw_articles() -> list[dict[str, Any]]:

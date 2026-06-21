@@ -28,17 +28,26 @@ from argus.models import (
     EventCreate,
     EventUpdate,
     IngestResult,
+    MLScoreRequest,
+    PromoteTermRequest,
     RawObservation,
     SchedulerJobStatus,
     Source,
 )
+from argus.ml import classify_category, classify_severity
 from argus.repository import (
     create_event,
+    delete_learned_classification_terms,
     get_event,
     get_settings,
+    list_active_classification_terms,
+    list_classification_term_candidates,
     list_recent_observations,
     list_sources,
     list_events,
+    ml_overview,
+    promote_classification_candidate,
+    reset_database,
     update_event,
     update_settings,
 )
@@ -200,6 +209,17 @@ def api_update_settings(payload: AppSettingsUpdate) -> AppSettings:
     return update_settings(payload)
 
 
+@app.post("/api/debug/reset-database")
+async def api_reset_database() -> dict[str, str]:
+    was_running = bool(scheduler.tasks)
+    if was_running:
+        await scheduler.stop()
+    reset_database()
+    if was_running:
+        scheduler.start()
+    return {"status": "reset"}
+
+
 @app.get("/api/sources", response_model=list[Source])
 def api_list_sources() -> list[Source]:
     return list_sources()
@@ -267,6 +287,48 @@ def api_sync_traffic() -> IngestResult:
 @app.get("/api/scheduler/jobs", response_model=list[SchedulerJobStatus])
 def api_scheduler_jobs() -> list[SchedulerJobStatus]:
     return [SchedulerJobStatus.model_validate(job) for job in scheduler.snapshot()]
+
+
+@app.get("/api/ml/overview")
+def api_ml_overview() -> dict[str, object]:
+    return ml_overview()
+
+
+@app.post("/api/ml/score")
+def api_ml_score(payload: MLScoreRequest) -> dict[str, object]:
+    category = classify_category(payload.text)
+    severity = classify_severity(payload.text)
+    return {
+        "category": category.__dict__ if category else None,
+        "severity": severity.__dict__ if severity else None,
+    }
+
+
+@app.get("/api/ml/candidates")
+def api_ml_candidates(source_id: str | None = None, limit: int = 80) -> list[dict[str, object]]:
+    return [
+        dict(row)
+        for row in list_classification_term_candidates(source_id=source_id, limit=limit)
+    ]
+
+
+@app.get("/api/ml/terms")
+def api_ml_terms(source_id: str | None = None, limit: int = 120) -> list[dict[str, object]]:
+    return [
+        dict(row)
+        for row in list_active_classification_terms(source_id=source_id, limit=limit)
+    ]
+
+
+@app.post("/api/ml/terms/promote")
+def api_ml_promote_term(payload: PromoteTermRequest) -> dict[str, str]:
+    promote_classification_candidate(**payload.model_dump())
+    return {"status": "promoted"}
+
+
+@app.delete("/api/ml/terms/learned")
+def api_ml_delete_learned_terms() -> dict[str, int]:
+    return {"deleted": delete_learned_classification_terms()}
 
 
 @app.post("/api/scheduler/jobs/{job_id}/run", response_model=IngestResult)

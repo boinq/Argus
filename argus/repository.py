@@ -4,7 +4,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Sequence
 
-from argus.database import connect
+from argus.database import connect, db_path, init_db
 from argus.knowledge import extract_candidate_terms, normalize_location_name
 from argus.models import (
     AppSettings,
@@ -41,6 +41,57 @@ def list_events() -> list[Event]:
             f"SELECT {EVENT_COLUMNS} FROM events ORDER BY starts_at DESC"
         ).fetchall()
     return [_row_to_event(row) for row in rows]
+
+
+def list_event_training_examples() -> list[sqlite3.Row]:
+    with connect() as connection:
+        return connection.execute(
+            """
+            SELECT title, description, category, severity
+            FROM events
+            WHERE source NOT LIKE 'Operator%'
+            ORDER BY updated_at DESC
+            LIMIT 2000
+            """
+        ).fetchall()
+
+
+def ml_overview() -> dict[str, object]:
+    with connect() as connection:
+        event_count = connection.execute("SELECT count(*) AS count FROM events").fetchone()["count"]
+        candidate_count = connection.execute(
+            "SELECT count(*) AS count FROM classification_term_candidates"
+        ).fetchone()["count"]
+        active_term_count = connection.execute(
+            "SELECT count(*) AS count FROM classification_terms"
+        ).fetchone()["count"]
+        learned_term_count = connection.execute(
+            "SELECT count(*) AS count FROM classification_terms WHERE source = 'learned'"
+        ).fetchone()["count"]
+        categories = connection.execute(
+            """
+            SELECT category, count(*) AS count
+            FROM events
+            GROUP BY category
+            ORDER BY count DESC, category
+            """
+        ).fetchall()
+        severities = connection.execute(
+            """
+            SELECT severity, count(*) AS count
+            FROM events
+            GROUP BY severity
+            ORDER BY count DESC, severity
+            """
+        ).fetchall()
+    return {
+        "events": int(event_count),
+        "candidate_terms": int(candidate_count),
+        "active_terms": int(active_term_count),
+        "learned_terms": int(learned_term_count),
+        "categories": [dict(row) for row in categories],
+        "severities": [dict(row) for row in severities],
+    }
 
 
 def get_event(event_id: int) -> Event | None:
@@ -120,7 +171,6 @@ def upsert_event(payload: EventCreate) -> tuple[Event, bool]:
             )
             event_id = int(cursor.lastrowid)
             created = True
-    learn_terms_from_event(payload)
     event = get_event(event_id)
     if event is None:
         raise RuntimeError("upserted event could not be read")
@@ -211,6 +261,91 @@ def upsert_classification_term(
         )
 
 
+def list_classification_term_candidates(
+    *,
+    source_id: str | None = None,
+    limit: int = 80,
+) -> list[sqlite3.Row]:
+    clauses: list[str] = []
+    params: list[object] = []
+    if source_id:
+        clauses.append("source_id = ?")
+        params.append(source_id)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    params.append(max(1, min(limit, 250)))
+    with connect() as connection:
+        return connection.execute(
+            f"""
+            SELECT source_id, term, normalized_term, seen_count, sample_title,
+                   first_seen, last_seen
+            FROM classification_term_candidates
+            {where}
+            ORDER BY seen_count DESC, length(term) DESC, last_seen DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+
+
+def list_active_classification_terms(
+    *,
+    source_id: str | None = None,
+    limit: int = 120,
+) -> list[sqlite3.Row]:
+    clauses: list[str] = []
+    params: list[object] = []
+    if source_id:
+        clauses.append("source_id = ?")
+        params.append(source_id)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    params.append(max(1, min(limit, 500)))
+    with connect() as connection:
+        return connection.execute(
+            f"""
+            SELECT source_id, rule_group, term, category, severity, score, source, updated_at
+            FROM classification_terms
+            {where}
+            ORDER BY updated_at DESC, score DESC, source_id, rule_group, term
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+
+
+def promote_classification_candidate(
+    *,
+    source_id: str,
+    rule_group: str,
+    term: str,
+    category: str = "",
+    severity: str = "",
+    score: int = 1,
+) -> None:
+    upsert_classification_term(
+        source_id=source_id,
+        rule_group=rule_group,
+        term=term,
+        category=category,
+        severity=severity,
+        score=score,
+        source="reviewed",
+    )
+    with connect() as connection:
+        connection.execute(
+            """
+            DELETE FROM classification_term_candidates
+            WHERE source_id = ? AND normalized_term = ?
+            """,
+            (source_id, normalize_location_name(term)),
+        )
+
+
+def delete_learned_classification_terms() -> int:
+    with connect() as connection:
+        cursor = connection.execute("DELETE FROM classification_terms WHERE source = 'learned'")
+    return cursor.rowcount
+
+
 def source_id_from_event_source(source: str) -> str | None:
     normalized = source.casefold()
     with connect() as connection:
@@ -247,6 +382,13 @@ def rule_group_from_event(source_id: str | None) -> str | None:
 def learned_term_score(term: str) -> int:
     words = term.split()
     return max(1, min(5, len(words) + 1))
+
+
+def reset_database() -> None:
+    path = db_path()
+    if path.exists():
+        path.unlink()
+    init_db()
 
 
 def get_settings() -> AppSettings:

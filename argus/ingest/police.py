@@ -12,6 +12,7 @@ from xml.etree import ElementTree
 
 import httpx
 
+from argus.geocoding import geocode_danish_place
 from argus.ingest.common import (
     clean_html,
     clean_id,
@@ -19,13 +20,16 @@ from argus.ingest.common import (
     parse_iso_datetime,
 )
 from argus.ingest.odin import normalize_station_name, resolve_location, station_location
+from argus.knowledge import normalize_location_name
 from argus.models import EventCreate, IngestResult
 from argus.repository import (
     delete_events_by_source,
     get_fallback_location,
     insert_raw_article,
     list_classification_terms,
+    record_location_candidate,
     update_source_status,
+    upsert_location_alias,
     upsert_event,
 )
 
@@ -35,6 +39,40 @@ SOURCE_NAME = "Police/Ritzau Short Messages"
 LEGACY_SOURCE_NAMES = ("Danish Police via Ritzau",)
 ENDPOINT = "https://via.ritzau.dk/rss/short-messages/latest"
 BASE_URL = "https://via.ritzau.dk"
+RELATION_BOUNDARY = r"\s+(?:umiddelbart\s+)?(?:før|ved|på|i|nær|omkring|fra|mod|vest\s+for|øst\s+for|syd\s+for|nord\s+for)\b"
+LOCATION_BOUNDARY = (
+    r"(?=,|\.|\n|\s+hvor\b|\s+som\b|\s+da\b|\s+og\s+opfordrer\b|"
+    rf"\s+og\s+politiet\b|\s+og\s+motorvejen\b|\s+med\b|\s+efter\b|"
+    rf"{RELATION_BOUNDARY}|$)"
+)
+PLACE_TEXT = r"[A-ZÆØÅ0-9][A-Za-zÆØÅæøå0-9 .'\-/+&]{1,80}?"
+ROAD_WORDS = (
+    "vej",
+    "vejen",
+    "gade",
+    "gaden",
+    "motorvej",
+    "motorvejen",
+    "landevej",
+    "landevejen",
+    "bro",
+    "broen",
+    "hegn",
+    "sø",
+)
+NON_LOCATION_PHRASES = {
+    "området",
+    "stedet",
+    "skadestuen",
+    "siden",
+    "vejen",
+    "motorvejen",
+    "personale",
+    "patrulje",
+    "politiet",
+    "trafikanter",
+}
+
 
 def sync_police_short_messages(limit: int = 30) -> IngestResult:
     try:
@@ -182,7 +220,9 @@ def first_release_item(state: dict[str, Any]) -> dict[str, Any] | None:
 def event_from_article(article: dict[str, Any]) -> EventCreate | None:
     evaluation = evaluate_police_message(article["title"], article.get("summary", ""))
     if evaluation is None:
-        return None
+        if list_classification_terms(SOURCE_ID, rule_group="event"):
+            return None
+        evaluation = {"category": "emergency", "severity": "low"}
 
     location = police_location(article)
     if location is None:
@@ -221,22 +261,129 @@ def evaluate_police_message(title: str, summary: str) -> dict[str, str] | None:
 
 
 def police_location(article: dict[str, Any]) -> tuple[float, float] | None:
+    title = str(article.get("title") or "")
+    summary = str(article.get("summary") or "")
     incident_text = " ".join(
         part
         for part in (
-            article.get("title", ""),
-            article.get("summary", ""),
+            title,
+            summary,
         )
         if part
     )
-    incident_location = resolve_location(
-        normalize_station_name(incident_text),
-        kinds=("place", "station"),
-    )
-    if incident_location is not None:
-        return incident_location
+    for candidate in police_location_candidates(title, summary):
+        location = resolve_police_location_candidate(candidate, incident_text)
+        if location is not None:
+            return location
 
-    return station_location(str(article.get("publisher_city") or "")) or get_fallback_location()
+    publisher_city = str(article.get("publisher_city") or "")
+    if publisher_city:
+        publisher_location = resolve_police_location_candidate(publisher_city, incident_text)
+        if publisher_location is not None:
+            return publisher_location
+        publisher_location = station_location(publisher_city)
+        if publisher_location is not None:
+            return publisher_location
+    return get_fallback_location()
+
+
+def police_location_candidates(title: str, summary: str) -> list[str]:
+    text = clean_police_location_text(f"{title}. {summary}")
+    candidates: list[str] = []
+
+    road_city_pattern = re.compile(
+        rf"\b(?P<road>{PLACE_TEXT}(?:{'|'.join(ROAD_WORDS)}))\s+(?:i|ved|nær)\s+"
+        rf"(?P<city>{PLACE_TEXT}){LOCATION_BOUNDARY}",
+        re.IGNORECASE,
+    )
+    for match in road_city_pattern.finditer(text):
+        road = clean_location_candidate(match.group("road"))
+        city = clean_location_candidate(match.group("city"))
+        if road and city:
+            add_location_candidate(candidates, f"{road} {city}")
+            add_location_candidate(candidates, city)
+
+    between_pattern = re.compile(
+        rf"\bmellem\s+(?P<first>{PLACE_TEXT})\s+og\s+(?P<second>{PLACE_TEXT})"
+        rf"{LOCATION_BOUNDARY}",
+        re.IGNORECASE,
+    )
+    for match in between_pattern.finditer(text):
+        add_location_candidate(candidates, clean_location_candidate(match.group("first")))
+        add_location_candidate(candidates, clean_location_candidate(match.group("second")))
+
+    relation_pattern = re.compile(
+        rf"\b(?:umiddelbart\s+)?(?:før|ved|på|i|nær|omkring|fra|mod|"
+        rf"vest\s+for|øst\s+for|syd\s+for|nord\s+for)\s+"
+        rf"(?P<value>{PLACE_TEXT}){LOCATION_BOUNDARY}",
+        re.IGNORECASE,
+    )
+    for match in relation_pattern.finditer(text):
+        add_location_candidate(candidates, clean_location_candidate(match.group("value")))
+
+    return candidates
+
+
+def resolve_police_location_candidate(
+    candidate: str,
+    context: str,
+) -> tuple[float, float] | None:
+    normalized = normalize_location_name(candidate)
+    if not normalized:
+        return None
+
+    cached = resolve_location(normalize_station_name(candidate), kinds=("place", "station"))
+    if cached is not None:
+        return cached
+
+    geocoded = geocode_danish_place(candidate)
+    if geocoded is not None:
+        latitude, longitude = geocoded
+        upsert_location_alias(
+            kind="place",
+            name=candidate,
+            latitude=latitude,
+            longitude=longitude,
+            source="learned",
+        )
+        return geocoded
+
+    record_location_candidate(
+        source_id=SOURCE_ID,
+        kind="place",
+        name=candidate,
+        normalized_name=normalized,
+        context=context,
+    )
+    return None
+
+
+def clean_police_location_text(value: str) -> str:
+    value = clean_html(value)
+    value = re.sub(r"\s+", " ", value)
+    return value.strip()
+
+
+def clean_location_candidate(value: str) -> str:
+    value = clean_police_location_text(value)
+    value = re.sub(r"^(den|det|en|et|de|der|denne|igangværende)\s+", "", value, flags=re.IGNORECASE)
+    value = re.sub(r"\s+(nordgående|sydgående|østgående|vestgående)\s+spor$", "", value, flags=re.IGNORECASE)
+    value = value.strip(" .,:;()[]\"'")
+    words = value.split()
+    if len(words) > 7:
+        value = " ".join(words[:7])
+    return value
+
+
+def add_location_candidate(candidates: list[str], candidate: str) -> None:
+    candidate = clean_location_candidate(candidate)
+    normalized = normalize_location_name(candidate)
+    if not normalized or normalized in NON_LOCATION_PHRASES:
+        return
+    if len(candidate) < 2:
+        return
+    if candidate not in candidates:
+        candidates.append(candidate)
 
 
 def meta_content(html: str, property_name: str) -> str:

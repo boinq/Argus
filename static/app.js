@@ -1,6 +1,13 @@
 import { createMarkerLayer, setupMap } from "./js/map.js";
 import { eventDetailHtml } from "./js/event-detail.js";
 import { markerFor, markerForObservationStation } from "./js/markers.js";
+import {
+  renderMlCandidates,
+  renderMlOverview,
+  renderMlScore,
+  renderMlSources,
+  renderMlTerms,
+} from "./js/ml-panel.js";
 import { renderReports as renderReportsPanel, reportEvents as filterReportEvents } from "./js/reports-panel.js";
 import {
   fillSettings,
@@ -39,6 +46,7 @@ const menuItems = document.querySelectorAll(".menu-item[data-view]");
 const eventsView = document.querySelector("#events-view");
 const sourcesView = document.querySelector("#sources-view");
 const reportsView = document.querySelector("#reports-view");
+const mlView = document.querySelector("#ml-view");
 const settingsView = document.querySelector("#settings-view");
 const settingsForm = document.querySelector("#settings-form");
 const settingsNote = document.querySelector("#settings-note");
@@ -52,6 +60,7 @@ const ntfyServerUrl = document.querySelector("#ntfy-server-url");
 const ntfyTopic = document.querySelector("#ntfy-topic");
 const ntfyToken = document.querySelector("#ntfy-token");
 const ntfyPriority = document.querySelector("#ntfy-priority");
+const resetDatabase = document.querySelector("#reset-database");
 const reportScope = document.querySelector("#report-scope");
 const reportCategory = document.querySelector("#report-category");
 const reportSummary = document.querySelector("#report-summary");
@@ -65,6 +74,16 @@ const sourceNote = document.querySelector("#source-note");
 const observationNote = document.querySelector("#observation-note");
 const syncSource = document.querySelector("#sync-source");
 const sourceSyncTarget = document.querySelector("#source-sync-target");
+const mlRefresh = document.querySelector("#ml-refresh");
+const mlNote = document.querySelector("#ml-note");
+const mlSummary = document.querySelector("#ml-summary");
+const mlScoreText = document.querySelector("#ml-score-text");
+const mlScoreButton = document.querySelector("#ml-score-button");
+const mlScoreResult = document.querySelector("#ml-score-result");
+const mlSourceFilter = document.querySelector("#ml-source-filter");
+const mlCandidateList = document.querySelector("#ml-candidate-list");
+const mlTermList = document.querySelector("#ml-term-list");
+const mlClearLearned = document.querySelector("#ml-clear-learned");
 const layerCount = document.querySelector("#layer-count");
 const layersAll = document.querySelector("#layers-all");
 const layersNone = document.querySelector("#layers-none");
@@ -85,6 +104,9 @@ let enabledLayerCategories = new Set();
 let enabledLayerSources = new Set();
 let sourceRefreshTimer = null;
 let sourceCountdownTimer = null;
+let mlOverview = null;
+let mlCandidates = [];
+let mlTerms = [];
 
 const settingsElements = {
   publicBaseUrl,
@@ -144,7 +166,8 @@ function currentMapBaseEvents() {
 
 function syncLayerSelections() {
   const categories = [...new Set(events.map((event) => event.category))].sort();
-  const eventSources = [...new Set(events.map((event) => event.source))].sort();
+  const sourceNames = sources.map((source) => source.name);
+  const eventSources = [...new Set([...events.map((event) => event.source), ...sourceNames])].sort();
   categories.forEach((category) => {
     if (!knownLayerCategories.has(category)) {
       knownLayerCategories.add(category);
@@ -564,6 +587,121 @@ async function refreshSchedulerJobs() {
   }
 }
 
+async function loadMl() {
+  try {
+    if (!sources.length) {
+      await loadSources();
+    }
+    const query = mlSourceFilter.value
+      ? `?source_id=${encodeURIComponent(mlSourceFilter.value)}`
+      : "";
+    const [overviewResponse, candidatesResponse, termsResponse] = await Promise.all([
+      fetch("api/ml/overview"),
+      fetch(`api/ml/candidates${query}`),
+      fetch(`api/ml/terms${query}`),
+    ]);
+    if (!overviewResponse.ok || !candidatesResponse.ok || !termsResponse.ok) {
+      throw new Error("ML API request failed.");
+    }
+    mlOverview = await overviewResponse.json();
+    mlCandidates = await candidatesResponse.json();
+    mlTerms = await termsResponse.json();
+    renderMlSources(sources, mlSourceFilter);
+    renderMl();
+    mlNote.textContent = "ML state loaded.";
+    mlNote.classList.remove("error");
+  } catch (error) {
+    mlNote.textContent = error.message;
+    mlNote.classList.add("error");
+  }
+}
+
+function renderMl() {
+  if (!mlOverview) {
+    return;
+  }
+  renderMlOverview(mlOverview, mlSummary);
+  renderMlCandidates(mlCandidates, mlCandidateList);
+  renderMlTerms(mlTerms, mlTermList);
+}
+
+async function scoreMlText() {
+  const text = mlScoreText.value.trim();
+  if (!text) {
+    return;
+  }
+  mlScoreButton.disabled = true;
+  try {
+    const response = await fetch("api/ml/score", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!response.ok) {
+      throw new Error(`ML API responded with ${response.status}`);
+    }
+    renderMlScore(await response.json(), mlScoreResult);
+  } catch (error) {
+    mlScoreResult.innerHTML = `<p class="empty">${escapeHtml(error.message)}</p>`;
+  } finally {
+    mlScoreButton.disabled = false;
+  }
+}
+
+async function promoteMlCandidate(button) {
+  const card = button.closest("[data-ml-candidate]");
+  const field = (name) => card.querySelector(`[data-ml-field="${name}"]`)?.value || "";
+  const payload = {
+    source_id: button.dataset.sourceId,
+    term: button.dataset.term,
+    rule_group: field("rule-group"),
+    category: field("category"),
+    severity: field("severity"),
+    score: Number(field("score") || 1),
+  };
+  button.disabled = true;
+  try {
+    const response = await fetch("api/ml/terms/promote", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      throw new Error(`ML API responded with ${response.status}`);
+    }
+    mlNote.textContent = "Candidate promoted to active rule.";
+    mlNote.classList.remove("error");
+    await loadMl();
+  } catch (error) {
+    mlNote.textContent = error.message;
+    mlNote.classList.add("error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function clearLearnedMlRules() {
+  if (!window.confirm("Delete active rules whose source is marked learned? Reviewed rules and candidates remain.")) {
+    return;
+  }
+  mlClearLearned.disabled = true;
+  try {
+    const response = await fetch("api/ml/terms/learned", { method: "DELETE" });
+    if (!response.ok) {
+      throw new Error(`ML API responded with ${response.status}`);
+    }
+    const result = await response.json();
+    mlNote.textContent = `${result.deleted} learned active rules deleted.`;
+    mlNote.classList.remove("error");
+    await loadMl();
+  } catch (error) {
+    mlNote.textContent = error.message;
+    mlNote.classList.add("error");
+  } finally {
+    mlClearLearned.disabled = false;
+  }
+}
+
 async function loadObservations() {
   try {
     const response = await fetch("api/observations?source_id=dmi-metobs&limit=2000");
@@ -683,6 +821,45 @@ async function saveSettings(event) {
   }
 }
 
+async function resetDatabaseFromSettings() {
+  const confirmed = window.confirm(
+    "Clear the entire local database? This removes events, raw source data, learned terms, locations, settings, and history.",
+  );
+  if (!confirmed) {
+    return;
+  }
+  resetDatabase.disabled = true;
+  settingsNote.textContent = "Clearing database...";
+  settingsNote.classList.remove("error");
+  try {
+    const response = await fetch("api/debug/reset-database", { method: "POST" });
+    if (!response.ok) {
+      throw new Error(`API responded with ${response.status}`);
+    }
+    events = [];
+    observations = [];
+    observationStations = [];
+    sources = [];
+    schedulerJobs = [];
+    knownLayerCategories.clear();
+    knownLayerSources.clear();
+    enabledLayerCategories.clear();
+    enabledLayerSources.clear();
+    activeEventId = null;
+    activeStationId = null;
+    closeEventDetail();
+    settingsNote.textContent = "Database cleared. Sources and default settings were reinitialized.";
+    await loadSettings();
+    await loadSources();
+    await loadEvents();
+  } catch (error) {
+    settingsNote.textContent = error.message;
+    settingsNote.classList.add("error");
+  } finally {
+    resetDatabase.disabled = false;
+  }
+}
+
 function reportEvents() {
   return filterReportEvents(events, {
     scope: reportScope.value,
@@ -708,6 +885,7 @@ function setView(viewName) {
   eventsView.hidden = viewName !== "events";
   sourcesView.hidden = viewName !== "sources";
   reportsView.hidden = viewName !== "reports";
+  mlView.hidden = viewName !== "ml";
   settingsView.hidden = viewName !== "settings";
   menuItems.forEach((item) => {
     item.classList.toggle("active", item.dataset.view === viewName);
@@ -719,11 +897,16 @@ function setView(viewName) {
   if (viewName === "sources") {
     loadSources();
   }
+  if (viewName === "ml") {
+    loadMl();
+  }
   if (viewName === "reports") {
     renderReports();
     renderMap(mapLayerEvents(currentMapBaseEvents()));
   } else if (viewName === "sources") {
     renderSources();
+    renderMap(mapLayerEvents(currentMapBaseEvents()));
+  } else if (viewName === "ml") {
     renderMap(mapLayerEvents(currentMapBaseEvents()));
   } else {
     renderMap(mapLayerEvents(currentMapBaseEvents()));
@@ -794,6 +977,16 @@ reportCategory.addEventListener("change", () => {
   renderMap(mapLayerEvents(currentMapBaseEvents()));
 });
 refreshReport.addEventListener("click", loadEvents);
+mlRefresh.addEventListener("click", loadMl);
+mlSourceFilter.addEventListener("change", loadMl);
+mlScoreButton.addEventListener("click", scoreMlText);
+mlClearLearned.addEventListener("click", clearLearnedMlRules);
+mlCandidateList.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-ml-action='promote']");
+  if (button) {
+    promoteMlCandidate(button);
+  }
+});
 menuToggle.addEventListener("click", () => {
   const isOpen = sideMenu.classList.contains("open");
   setMenuOpen(!isOpen);
@@ -803,6 +996,7 @@ menuItems.forEach((item) => {
   item.addEventListener("click", () => setView(item.dataset.view));
 });
 settingsForm.addEventListener("submit", saveSettings);
+resetDatabase.addEventListener("click", resetDatabaseFromSettings);
 eventDetailDrawer.addEventListener("click", (event) => {
   const relatedButton = event.target.closest("[data-related-event-id]");
   if (relatedButton) {
@@ -860,4 +1054,5 @@ setMenuOpen(false);
 startSourceTimers();
 loadEvents();
 loadSources();
-setInterval(loadEvents, 60000);
+setInterval(loadEvents, 15000);
+setInterval(loadObservations, 30000);

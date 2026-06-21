@@ -43,6 +43,7 @@
           <button type="button" class="menu-item">Sensors</button>
           <button type="button" class="menu-item">Alerts</button>
           <button type="button" class="menu-item" data-view="sources">Sources</button>
+          <button type="button" class="menu-item" data-view="ml">ML</button>
           <button type="button" class="menu-item" data-view="reports">Reports</button>
           <button type="button" class="menu-item" data-view="settings">Settings</button>
         </nav>
@@ -198,6 +199,13 @@
                 </select>
               </label>
             </div>
+
+            <div class="settings-group">
+              <h3>Debug</h3>
+              <button type="button" class="danger-button" id="reset-database">
+                Clear database
+              </button>
+            </div>
           </form>
           <div class="settings-note" id="settings-note">
             Runtime proxy values are read from environment variables on startup.
@@ -228,6 +236,48 @@
           <div class="settings-note" id="observation-note"></div>
           <div class="source-summary" id="source-summary"></div>
           <div class="source-list" id="source-list"></div>
+        </div>
+
+        <div class="panel-view" id="ml-view" hidden>
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Model Ops</p>
+              <h2>ML</h2>
+            </div>
+            <button type="button" class="save-button" id="ml-refresh">Refresh</button>
+          </div>
+
+          <div class="settings-note" id="ml-note"></div>
+          <div class="source-summary" id="ml-summary"></div>
+
+          <div class="report-section">
+            <h3>Score Text</h3>
+            <textarea
+              id="ml-score-text"
+              class="ml-textarea"
+              placeholder="Paste a headline, article summary, ODIN entry, or source text..."
+            ></textarea>
+            <button type="button" class="save-button" id="ml-score-button">Score</button>
+            <div class="ml-score-result" id="ml-score-result"></div>
+          </div>
+
+          <div class="report-section">
+            <h3>Candidate Terms</h3>
+            <div class="report-toolbar">
+              <select id="ml-source-filter" aria-label="Filter ML candidates by source">
+                <option value="">All sources</option>
+              </select>
+              <button type="button" class="danger-button" id="ml-clear-learned">
+                Clear learned rules
+              </button>
+            </div>
+            <div class="ml-list" id="ml-candidate-list"></div>
+          </div>
+
+          <div class="report-section">
+            <h3>Active Rules</h3>
+            <div class="ml-list" id="ml-term-list"></div>
+          </div>
         </div>
 
         <div class="panel-view" id="reports-view" hidden>

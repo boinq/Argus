@@ -6,9 +6,21 @@ import json
 from urllib.parse import quote
 
 from argus.database import connect, init_db
+from argus.geocoding import coordinates_from_payload
 from argus.ingest.evaluator import evaluate_news_relevance
-from argus.ingest.odin import beredskab_location, incident_location, parse_odin_rss, station_location
-from argus.ingest.police import parse_article_page, parse_police_rss, police_location
+from argus.ingest.odin import (
+    beredskab_location,
+    incident_location,
+    parse_odin_rss,
+    station_geocode_queries,
+    station_location,
+)
+from argus.ingest.police import (
+    parse_article_page,
+    parse_police_rss,
+    police_location,
+    police_location_candidates,
+)
 from argus.ingest.traffic import clean_traffic_text
 from argus.main import (
     api_create_event,
@@ -16,6 +28,12 @@ from argus.main import (
     api_list_events,
     api_list_observations,
     api_list_sources,
+    api_ml_candidates,
+    api_ml_overview,
+    api_ml_promote_term,
+    api_ml_score,
+    api_ml_terms,
+    api_reset_database,
     api_scheduler_jobs,
     api_sync_electricity,
     api_sync_electricity_incidents,
@@ -30,7 +48,7 @@ from argus.main import (
     api_update_settings,
     health,
 )
-from argus.models import AppSettingsUpdate, EventCreate
+from argus.models import AppSettingsUpdate, EventCreate, MLScoreRequest, PromoteTermRequest
 from argus.repository import (
     get_location_alias,
     insert_raw_article,
@@ -108,6 +126,89 @@ def test_create_event(tmp_path, monkeypatch):
 
     assert event.id > 0
     assert event.title == payload.title
+
+
+def test_debug_reset_database_clears_runtime_data(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
+    init_db()
+    api_create_event(
+        EventCreate.model_validate(
+            {
+                "title": "Temporary disruption",
+                "category": "transport",
+                "severity": "medium",
+                "status": "current",
+                "source": "Operator test input",
+                "description": "Temporary test event.",
+                "latitude": 55.4,
+                "longitude": 10.4,
+                "starts_at": "2026-06-20T16:30:00+02:00",
+                "ends_at": None,
+            }
+        )
+    )
+
+    assert api_list_events()
+
+    asyncio.run(api_reset_database())
+
+    assert api_list_events() == []
+    assert {source.id for source in api_list_sources()} >= {"dr-news", "odin-incidents"}
+
+
+def test_ml_api_lists_scores_and_promotes_candidates(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
+    init_db()
+    for title, category, description in (
+        ("Bridge closed after traffic accident", "transport", "Traffic accident closed a major bridge."),
+        ("Bridge traffic accident blocks lanes", "transport", "Traffic accident blocked a bridge."),
+        ("Power outage affects homes", "electrical", "Electricity outage affected customers."),
+    ):
+        api_create_event(
+            EventCreate.model_validate(
+                {
+                    "title": title,
+                    "category": category,
+                    "severity": "high",
+                    "status": "current",
+                    "source": "DR Nyheder",
+                    "description": description,
+                    "latitude": 55.4,
+                    "longitude": 10.4,
+                    "starts_at": "2026-06-20T16:30:00+02:00",
+                    "ends_at": None,
+                }
+            )
+        )
+    insert_raw_article(
+        article_id="dr-news:ml-candidate",
+        source_id="dr-news",
+        title="Bro lukket efter større uheld",
+        url="https://example.test/ml",
+        published_at="2026-06-20T12:00:00+00:00",
+        summary="Trafikken er påvirket.",
+        payload="{}",
+    )
+
+    overview = api_ml_overview()
+    candidates = api_ml_candidates(source_id="dr-news")
+    score = api_ml_score(MLScoreRequest(text="Traffic accident closed a major bridge"))
+
+    assert overview["events"] == 3
+    assert candidates
+    assert score["category"] is not None
+
+    api_ml_promote_term(
+        PromoteTermRequest(
+            source_id="dr-news",
+            rule_group="category",
+            term=candidates[0]["term"],
+            category="transport",
+            score=4,
+        )
+    )
+
+    assert any(term["source"] == "reviewed" for term in api_ml_terms(source_id="dr-news"))
 
 
 def test_settings_can_be_updated(tmp_path, monkeypatch):
@@ -730,6 +831,69 @@ def test_police_location_falls_back_to_publisher_city(tmp_path, monkeypatch):
     assert location == (55.861, 9.85)
 
 
+def test_police_location_extracts_and_learns_incident_place(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
+    init_db()
+    learn_test_location("place", "Horsens", 55.861, 9.85)
+
+    def fake_geocode(name: str) -> tuple[float, float] | None:
+        return (55.699, 9.573) if name == "Vejlefjordbroen" else None
+
+    monkeypatch.setattr("argus.ingest.police.geocode_danish_place", fake_geocode)
+
+    location = police_location(
+        {
+            "title": "Færdselsuheld på Østjyske Motorvej syd for Vejlefjordbroen",
+            "summary": (
+                "Vi modtog kl. 1243 en anmeldelse om et færdselsuheld i Østjyske "
+                "Motorvejs nordgående spor umiddelbart før Vejlefjordbroen."
+            ),
+            "publisher_city": "Horsens",
+        }
+    )
+
+    assert location == (55.699, 9.573)
+    assert get_location_alias("place", "Vejlefjordbroen") == (55.699, 9.573)
+
+
+def test_police_location_records_unresolved_incident_candidates(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
+    init_db()
+    learn_test_location("place", "Esbjerg", 55.476, 8.459)
+    monkeypatch.setattr("argus.ingest.police.geocode_danish_place", lambda name: None)
+
+    location = police_location(
+        {
+            "title": "Politiet er til stede ved ukendt samlingssted",
+            "summary": "Vi følger situationen på stedet.",
+            "publisher_city": "Esbjerg",
+        }
+    )
+
+    with connect() as connection:
+        row = connection.execute(
+            """
+            SELECT name, seen_count
+            FROM location_candidates
+            WHERE source_id = 'police-ritzau-short-messages'
+            """
+        ).fetchone()
+
+    assert location == (55.476, 8.459)
+    assert row["name"] == "ukendt samlingssted"
+    assert row["seen_count"] == 1
+
+
+def test_police_location_candidate_parser_prioritizes_message_places():
+    candidates = police_location_candidates(
+        "Færdselsuheld",
+        "Uheldet skete på Korsør Landevej vest for Boeslunde.",
+    )
+
+    assert "Korsør Landevej" in candidates
+    assert "Boeslunde" in candidates
+
+
 def test_electricity_sync_creates_market_stress_event(tmp_path, monkeypatch):
     monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
     init_db()
@@ -1029,6 +1193,30 @@ def test_odin_station_location_uses_station_or_city_names(tmp_path, monkeypatch)
     assert station_location("Brandstation Hillerød") == (55.927, 12.301)
     assert station_location("Åsum - Odense") == (55.396, 10.463)
     assert station_location("Ukendt Station") is None
+
+
+def test_odin_station_location_geocodes_and_caches_unknown_station(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
+    init_db()
+    monkeypatch.setattr("argus.ingest.odin.geocode_danish_place", lambda name: (55.666, 12.398))
+
+    assert station_location("Glostrup") == (55.666, 12.398)
+    assert get_location_alias("station", "Glostrup") == (55.666, 12.398)
+
+
+def test_odin_station_geocode_queries_strip_dispatch_suffixes():
+    assert "Herlufmagle" in station_geocode_queries(
+        "St. Herlufmagle + Fu",
+        "st herlufmagle + fu",
+    )
+    assert "Nykøbing Falster" in station_geocode_queries("Nyk. Falster", "nyk falster")
+
+
+def test_geocoder_reads_nested_danish_place_coordinates():
+    assert (
+        coordinates_from_payload({"stednavn": {"visueltcenter": [12.398, 55.666]}})
+        == (55.666, 12.398)
+    )
 
 
 def test_odin_beredskab_location_uses_agency_name_as_fallback(tmp_path, monkeypatch):

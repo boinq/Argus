@@ -15,6 +15,7 @@ from argus.repository import (
     delete_events_by_source,
     get_fallback_location,
     insert_raw_article,
+    list_classification_terms,
     update_source_status,
     upsert_event,
 )
@@ -108,7 +109,7 @@ def parse_maritime_archive(html: str, archive_url: str, now: datetime) -> list[d
 
 def event_from_article(article: dict[str, Any]) -> EventCreate | None:
     evaluation = evaluate_maritime_relevance(article["title"], article.get("summary", ""))
-    if evaluation is None:
+    if evaluation is None and list_classification_terms(SOURCE_ID, rule_group="maritime"):
         return None
     starts_at = (
         datetime.fromisoformat(article["published_at"])
@@ -122,7 +123,7 @@ def event_from_article(article: dict[str, Any]) -> EventCreate | None:
     return EventCreate(
         title=f"DMA maritime notice: {article['title']}"[:140],
         category="maritime",
-        severity=evaluation.severity,
+        severity=evaluation.severity if evaluation else "low",
         status="monitoring",
         source="Danish Maritime Authority",
         description=(article.get("summary") or article["url"])[:1000],
