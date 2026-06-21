@@ -8,7 +8,7 @@ from urllib.parse import quote
 from argus.database import connect, init_db
 from argus.ingest.evaluator import evaluate_news_relevance
 from argus.ingest.common import DENMARK_CENTER
-from argus.ingest.odin import parse_odin_rss, station_location
+from argus.ingest.odin import beredskab_location, incident_location, parse_odin_rss, station_location
 from argus.ingest.police import parse_article_page, parse_police_rss
 from argus.ingest.traffic import clean_traffic_text
 from argus.main import (
@@ -711,6 +711,34 @@ def test_odin_sync_creates_emergency_event(tmp_path, monkeypatch):
     assert events[0].longitude == 9.702
 
 
+def test_odin_sync_falls_back_to_beredskab_location_when_station_is_empty(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
+    init_db()
+
+    monkeypatch.setattr(
+        "argus.ingest.odin.fetch_odin_incidents",
+        lambda limit: [
+            {
+                "id": "odin-incidents:empty-station",
+                "title": "Hovedstadens Beredskab",
+                "summary": "Førstemelding: Brandalarm Station:",
+                "url": "http://www.odin.dk/112puls/",
+                "published_at": "2026-06-20T17:05:41+00:00",
+                "alarm_type": "Brandalarm",
+                "station": "",
+                "reported_at": "20-06-2026 19:05:41",
+            }
+        ],
+    )
+
+    result = api_sync_odin()
+    events = api_list_events()
+
+    assert result.events_created == 1
+    assert events[0].latitude == 55.676
+    assert events[0].longitude == 12.568
+
+
 def test_odin_rss_parser_uses_description_and_time_for_ids():
     incidents = parse_odin_rss(
         """<?xml version="1.0" encoding="utf-8"?>
@@ -736,11 +764,63 @@ def test_odin_rss_parser_uses_description_and_time_for_ids():
     assert incidents[0]["station"] == "Vesterbro"
 
 
-def test_odin_station_location_uses_station_or_city_names():
+def test_odin_station_location_uses_station_or_city_names(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
+    init_db()
+
     assert station_location("Hovedstadens Beredskab - Station Vesterbro") == (55.669, 12.544)
     assert station_location("Brandstation Hillerød") == (55.927, 12.301)
     assert station_location("Åsum - Odense") == (55.396, 10.463)
     assert station_location("Ukendt Station") == DENMARK_CENTER
+
+
+def test_odin_beredskab_location_uses_agency_name_as_fallback(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
+    init_db()
+
+    assert beredskab_location("Hovedstadens Beredskab") == (55.676, 12.568)
+    assert beredskab_location("Beredskab 4K") == (55.458, 12.182)
+    assert beredskab_location("Ukendt Beredskab") == DENMARK_CENTER
+    assert (
+        incident_location(
+            {
+                "title": "Beredskab 4K",
+                "station": "",
+            }
+        )
+        == (55.458, 12.182)
+    )
+
+
+def test_odin_unknown_locations_are_recorded_as_candidates(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
+    init_db()
+
+    location = incident_location(
+        {
+            "title": "Ukendt Beredskab",
+            "summary": "Førstemelding: Brandalarm Station: Mystisk Station",
+            "station": "Mystisk Station",
+        }
+    )
+
+    assert location == DENMARK_CENTER
+    with connect() as connection:
+        candidates = connection.execute(
+            """
+            SELECT kind, name, normalized_name, seen_count
+            FROM location_candidates
+            WHERE source_id = 'odin-incidents'
+            ORDER BY kind
+            """
+        ).fetchall()
+
+    assert [candidate["kind"] for candidate in candidates] == ["beredskab", "station"]
+    assert {candidate["name"] for candidate in candidates} == {
+        "Mystisk Station",
+        "Ukendt Beredskab",
+    }
+    assert all(candidate["seen_count"] == 1 for candidate in candidates)
 
 
 def test_traffic_sync_creates_transport_event(tmp_path, monkeypatch):

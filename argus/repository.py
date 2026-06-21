@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import datetime, timezone
+from typing import Sequence
 
 from argus.database import connect
 from argus.models import (
@@ -314,3 +315,80 @@ def delete_events_by_source(source: str) -> int:
     with connect() as connection:
         cursor = connection.execute("DELETE FROM events WHERE source = ?", (source,))
     return cursor.rowcount
+
+
+def find_location_alias(
+    normalized_name: str,
+    *,
+    kinds: Sequence[str],
+) -> tuple[float, float] | None:
+    if not normalized_name or not kinds:
+        return None
+    placeholders = ",".join("?" for _ in kinds)
+    with connect() as connection:
+        row = connection.execute(
+            f"""
+            SELECT latitude, longitude
+            FROM location_aliases
+            WHERE normalized_name = ?
+              AND kind IN ({placeholders})
+            ORDER BY
+              CASE kind
+                WHEN 'station' THEN 0
+                WHEN 'place' THEN 1
+                WHEN 'beredskab' THEN 2
+                ELSE 3
+              END
+            LIMIT 1
+            """,
+            (normalized_name, *kinds),
+        ).fetchone()
+    if row is None:
+        return None
+    return (float(row["latitude"]), float(row["longitude"]))
+
+
+def list_location_aliases(*, kinds: Sequence[str]) -> list[sqlite3.Row]:
+    if not kinds:
+        return []
+    placeholders = ",".join("?" for _ in kinds)
+    with connect() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT kind, name, normalized_name, latitude, longitude
+            FROM location_aliases
+            WHERE kind IN ({placeholders})
+            ORDER BY length(normalized_name) DESC
+            """,
+            tuple(kinds),
+        ).fetchall()
+    return rows
+
+
+def record_location_candidate(
+    *,
+    source_id: str,
+    kind: str,
+    name: str,
+    normalized_name: str,
+    context: str,
+) -> None:
+    if not normalized_name:
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    with connect() as connection:
+        connection.execute(
+            """
+            INSERT INTO location_candidates (
+                source_id, kind, name, normalized_name, context,
+                seen_count, first_seen, last_seen
+            )
+            VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+            ON CONFLICT(source_id, kind, normalized_name) DO UPDATE SET
+                name = excluded.name,
+                context = excluded.context,
+                seen_count = location_candidates.seen_count + 1,
+                last_seen = excluded.last_seen
+            """,
+            (source_id, kind, name, normalized_name, context[:1000], now, now),
+        )
