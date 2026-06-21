@@ -8,13 +8,14 @@ from xml.etree import ElementTree
 
 import httpx
 
-from argus.ingest.common import DENMARK_CENTER, clean_html, clean_id, parse_feed_datetime
+from argus.ingest.common import clean_html, clean_id, parse_feed_datetime
 from argus.models import EventCreate, IngestResult
 from argus.repository import (
     delete_events_by_source,
     find_location_alias,
     insert_raw_article,
     list_location_aliases,
+    list_classification_terms,
     record_location_candidate,
     update_source_status,
     upsert_event,
@@ -58,6 +59,8 @@ def sync_odin(limit: int = 20) -> IngestResult:
             stored += 1
 
         event = event_from_incident(incident)
+        if event is None:
+            continue
         _, was_created = upsert_event(event)
         if was_created:
             created += 1
@@ -110,9 +113,12 @@ def parse_odin_rss(xml_text: str) -> list[dict[str, Any]]:
     return incidents
 
 
-def event_from_incident(incident: dict[str, Any]) -> EventCreate:
+def event_from_incident(incident: dict[str, Any]) -> EventCreate | None:
     station = str(incident.get("station") or "")
-    latitude, longitude = incident_location(incident)
+    location = incident_location(incident)
+    if location is None:
+        return None
+    latitude, longitude = location
     starts_at = (
         datetime.fromisoformat(incident["published_at"])
         if incident.get("published_at")
@@ -144,14 +150,14 @@ def parse_station(summary: str) -> str:
     return clean_html(match.group("value")) if match else ""
 
 
-def station_location(station: str) -> tuple[float, float]:
+def station_location(station: str) -> tuple[float, float] | None:
     normalized = normalize_station_name(station)
     if not normalized:
-        return DENMARK_CENTER
-    return resolve_location(normalized, kinds=("station", "place")) or DENMARK_CENTER
+        return None
+    return resolve_location(normalized, kinds=("station", "place"))
 
 
-def incident_location(incident: dict[str, Any]) -> tuple[float, float]:
+def incident_location(incident: dict[str, Any]) -> tuple[float, float] | None:
     station = str(incident.get("station") or "")
     station_normalized = normalize_station_name(station)
     location = resolve_location(station_normalized, kinds=("station", "place"))
@@ -182,13 +188,13 @@ def incident_location(incident: dict[str, Any]) -> tuple[float, float]:
             normalized_name=beredskab_normalized,
             context=context,
         )
-    return DENMARK_CENTER
+    return None
 
 
-def beredskab_location(name: str) -> tuple[float, float]:
+def beredskab_location(name: str) -> tuple[float, float] | None:
     normalized = normalize_beredskab_name(name)
     if not normalized:
-        return DENMARK_CENTER
+        return None
     return (
         resolve_location(normalized, kinds=("beredskab",))
         or station_location(name)
@@ -260,8 +266,7 @@ def normalize_beredskab_name(name: str) -> str:
 
 def odin_severity(alarm_type: str) -> str:
     normalized = alarm_type.lower()
-    if any(keyword in normalized for keyword in ("str. forurening", "kemikalie", "bygn.brand", "villa", "rækkehus")):
-        return "high"
-    if any(keyword in normalized for keyword in ("brand", "naturbrand", "forurening", "spild")):
-        return "medium"
+    for row in list_classification_terms(SOURCE_ID, rule_group="severity"):
+        if str(row["term"]).lower() in normalized:
+            return str(row["severity"])
     return "low"

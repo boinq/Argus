@@ -9,7 +9,13 @@ import httpx
 
 from argus.ingest.common import clean_html, parse_iso_datetime
 from argus.models import EventCreate, IngestResult
-from argus.repository import delete_events_by_source, insert_raw_article, update_source_status, upsert_event
+from argus.repository import (
+    delete_events_by_source,
+    insert_raw_article,
+    list_classification_terms,
+    update_source_status,
+    upsert_event,
+)
 
 
 SOURCE_ID = "trafikinfo-events"
@@ -132,10 +138,9 @@ def event_from_feature(feature: dict[str, Any]) -> EventCreate | None:
 
 
 def traffic_severity(text: str) -> str:
-    if any(keyword in text for keyword in ("vejen er spærret", "spærret vej", "uheld", "redningsarbejde")):
-        return "high"
-    if any(keyword in text for keyword in ("spor spærret", "spor blokeret", "glat føre")):
-        return "medium"
+    for row in list_classification_terms(SOURCE_ID, rule_group="severity"):
+        if str(row["term"]).lower() in text:
+            return str(row["severity"])
     return "low"
 
 

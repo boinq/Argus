@@ -13,15 +13,21 @@ from xml.etree import ElementTree
 import httpx
 
 from argus.ingest.common import (
-    DENMARK_CENTER,
     clean_html,
     clean_id,
     parse_feed_datetime,
     parse_iso_datetime,
 )
-from argus.ingest.odin import station_location
+from argus.ingest.odin import normalize_station_name, resolve_location, station_location
 from argus.models import EventCreate, IngestResult
-from argus.repository import delete_events_by_source, insert_raw_article, update_source_status, upsert_event
+from argus.repository import (
+    delete_events_by_source,
+    get_fallback_location,
+    insert_raw_article,
+    list_classification_terms,
+    update_source_status,
+    upsert_event,
+)
 
 
 SOURCE_ID = "police-ritzau-short-messages"
@@ -29,29 +35,6 @@ SOURCE_NAME = "Police/Ritzau Short Messages"
 LEGACY_SOURCE_NAMES = ("Danish Police via Ritzau",)
 ENDPOINT = "https://via.ritzau.dk/rss/short-messages/latest"
 BASE_URL = "https://via.ritzau.dk"
-
-EVENT_TERMS: tuple[tuple[str, str, str, int], ...] = (
-    ("faerdselsuheld", "transport", "high", 5),
-    ("færdselsuheld", "transport", "high", 5),
-    ("uheld", "transport", "medium", 3),
-    ("motorvej", "transport", "medium", 3),
-    ("spærret", "transport", "high", 4),
-    ("spaerret", "transport", "high", 4),
-    ("brand", "emergency", "medium", 4),
-    ("ildspåsættelse", "emergency", "medium", 4),
-    ("ildspaasaettelse", "emergency", "medium", 4),
-    ("evakuering", "emergency", "high", 5),
-    ("eksplosion", "emergency", "high", 5),
-    ("sprængstof", "hybrid", "high", 5),
-    ("spraengstof", "hybrid", "high", 5),
-    ("demonstration", "emergency", "low", 2),
-    ("til stede", "emergency", "low", 2),
-    ("personpåkørsel", "transport", "high", 5),
-    ("personpaakorsel", "transport", "high", 5),
-    ("togtrafik", "transport", "medium", 3),
-    ("sikkerhedslanding", "transport", "medium", 4),
-)
-
 
 def sync_police_short_messages(limit: int = 30) -> IngestResult:
     try:
@@ -201,7 +184,10 @@ def event_from_article(article: dict[str, Any]) -> EventCreate | None:
     if evaluation is None:
         return None
 
-    latitude, longitude = police_location(article)
+    location = police_location(article)
+    if location is None:
+        return None
+    latitude, longitude = location
     starts_at = (
         datetime.fromisoformat(article["published_at"])
         if article.get("published_at")
@@ -224,26 +210,33 @@ def event_from_article(article: dict[str, Any]) -> EventCreate | None:
 def evaluate_police_message(title: str, summary: str) -> dict[str, str] | None:
     normalized = normalize(f"{title} {summary}")
     best: tuple[str, str, int] | None = None
-    for term, category, severity, score in EVENT_TERMS:
+    for row in list_classification_terms(SOURCE_ID, rule_group="event"):
+        term = normalize(str(row["term"]))
+        score = int(row["score"])
         if term in normalized and (best is None or score > best[2]):
-            best = (category, severity, score)
+            best = (str(row["category"]), str(row["severity"]), score)
     if best is None:
         return None
     return {"category": best[0], "severity": best[1]}
 
 
-def police_location(article: dict[str, Any]) -> tuple[float, float]:
-    text = " ".join(
+def police_location(article: dict[str, Any]) -> tuple[float, float] | None:
+    incident_text = " ".join(
         part
         for part in (
             article.get("title", ""),
             article.get("summary", ""),
-            article.get("publisher_city", ""),
         )
         if part
     )
-    location = station_location(text)
-    return location if location != DENMARK_CENTER else DENMARK_CENTER
+    incident_location = resolve_location(
+        normalize_station_name(incident_text),
+        kinds=("place", "station"),
+    )
+    if incident_location is not None:
+        return incident_location
+
+    return station_location(str(article.get("publisher_city") or "")) or get_fallback_location()
 
 
 def meta_content(html: str, property_name: str) -> str:

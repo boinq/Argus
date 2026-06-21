@@ -7,9 +7,8 @@ from urllib.parse import quote
 
 from argus.database import connect, init_db
 from argus.ingest.evaluator import evaluate_news_relevance
-from argus.ingest.common import DENMARK_CENTER
 from argus.ingest.odin import beredskab_location, incident_location, parse_odin_rss, station_location
-from argus.ingest.police import parse_article_page, parse_police_rss
+from argus.ingest.police import parse_article_page, parse_police_rss, police_location
 from argus.ingest.traffic import clean_traffic_text
 from argus.main import (
     api_create_event,
@@ -32,9 +31,47 @@ from argus.main import (
     health,
 )
 from argus.models import AppSettingsUpdate, EventCreate
-from argus.repository import insert_raw_article
+from argus.repository import (
+    get_location_alias,
+    insert_raw_article,
+    insert_raw_observation,
+    list_classification_terms,
+    upsert_classification_term,
+    upsert_location_alias,
+)
 from argus.scheduler import PollJob, PollScheduler
 from argus.models import IngestResult
+from argus.tools.rebuild_events import SOURCES, rebuild_source
+
+
+def learn_test_location(kind: str, name: str, latitude: float, longitude: float) -> None:
+    upsert_location_alias(
+        kind=kind,
+        name=name,
+        latitude=latitude,
+        longitude=longitude,
+        source="learned",
+    )
+
+
+def learn_test_term(
+    source_id: str,
+    rule_group: str,
+    term: str,
+    *,
+    category: str = "",
+    severity: str = "",
+    score: int = 1,
+) -> None:
+    upsert_classification_term(
+        source_id=source_id,
+        rule_group=rule_group,
+        term=term,
+        category=category,
+        severity=severity,
+        score=score,
+        source="learned",
+    )
 
 
 def test_health(tmp_path, monkeypatch):
@@ -123,6 +160,99 @@ def test_sources_are_returned(tmp_path, monkeypatch):
     assert police_source.type == "emergency"
     assert police_source.cadence == "Every 10 minutes"
     assert all(source.status == "connected" for source in sources)
+
+
+def test_location_aliases_are_database_managed(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
+    init_db()
+
+    assert get_location_alias("place", "Rømø") is None
+
+    learn_test_location("place", "Rømø", 55.145, 8.552)
+    learn_test_location("place", "Vejlefjordbroen", 55.708, 9.624)
+
+    assert get_location_alias("place", "Rømø") == (55.145, 8.552)
+    assert get_location_alias("place", "Vejlefjordbroen") == (55.708, 9.624)
+
+
+def test_classification_terms_are_database_managed(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
+    init_db()
+
+    assert list_classification_terms("police-ritzau-short-messages", rule_group="event") == []
+
+    learn_test_term(
+        "police-ritzau-short-messages",
+        "event",
+        "færdselsuheld",
+        category="transport",
+        severity="high",
+        score=5,
+    )
+    learn_test_term("health-alerts", "promote", "udbrud", category="health", severity="high")
+    learn_test_term("trafikinfo-events", "severity", "uheld", category="transport", severity="high")
+
+    police_terms = list_classification_terms(
+        "police-ritzau-short-messages",
+        rule_group="event",
+    )
+    health_terms = list_classification_terms("health-alerts", rule_group="promote")
+    traffic_terms = list_classification_terms("trafikinfo-events", rule_group="severity")
+
+    assert any(
+        row["term"] == "færdselsuheld" and row["category"] == "transport"
+        for row in police_terms
+    )
+    assert any(row["term"] == "udbrud" and row["severity"] == "high" for row in health_terms)
+    assert any(row["term"] == "uheld" and row["severity"] == "high" for row in traffic_terms)
+
+
+def test_raw_article_learning_records_term_candidates(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
+    init_db()
+
+    insert_raw_article(
+        article_id="dr-news:learning-test",
+        source_id="dr-news",
+        title="Mystisk forsyningshændelse ved havnen",
+        url="https://example.test/learning",
+        published_at="2026-06-20T12:00:00+00:00",
+        summary="Lokale myndigheder undersøger forsyningshændelse ved havnen.",
+        payload="{}",
+    )
+
+    with connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT term, seen_count
+            FROM classification_term_candidates
+            WHERE source_id = 'dr-news'
+              AND normalized_term = 'forsyningshaendelse'
+            """
+        ).fetchall()
+
+    assert len(rows) == 1
+    assert rows[0]["term"] == "forsyningshændelse"
+    assert rows[0]["seen_count"] == 1
+
+
+def test_raw_observation_learning_records_station_location(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
+    init_db()
+
+    insert_raw_observation(
+        observation_id="learning-observation",
+        source_id="dmi-metobs",
+        observed_at="2026-06-20T15:00:00Z",
+        parameter_id="temp_dry",
+        station_id="09999",
+        latitude=56.123,
+        longitude=10.456,
+        value=12.3,
+        payload="{}",
+    )
+
+    assert get_location_alias("station", "09999") == (56.123, 10.456)
 
 
 def test_dmi_sync_creates_weather_event(tmp_path, monkeypatch):
@@ -265,6 +395,14 @@ def test_scheduler_staggers_initial_next_runs(monkeypatch):
 def test_health_sync_creates_health_event(tmp_path, monkeypatch):
     monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
     init_db()
+    learn_test_location("place", "health learned area", 55.676, 12.568)
+    learn_test_term(
+        "health-alerts",
+        "promote",
+        "alment farlig",
+        category="health",
+        severity="high",
+    )
 
     def fake_fetch_health_articles(limit: int):
         assert limit == 25
@@ -290,6 +428,9 @@ def test_health_sync_creates_health_event(tmp_path, monkeypatch):
 def test_news_sync_creates_hazard_event(tmp_path, monkeypatch):
     monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
     init_db()
+    learn_test_location("place", "news learned area", 55.676, 12.568)
+    learn_test_term("dr-news", "category", "cyberangreb", category="hybrid", score=5)
+    learn_test_term("dr-news", "impact", "kritisk", score=3)
 
     monkeypatch.setattr(
         "argus.ingest.news.fetch_news_articles",
@@ -425,6 +566,15 @@ def test_police_article_page_parser_reads_initial_state():
 def test_police_sync_crawls_links_and_creates_relevant_event(tmp_path, monkeypatch):
     monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
     init_db()
+    learn_test_location("place", "Vejlefjordbroen", 55.708, 9.624)
+    learn_test_term(
+        "police-ritzau-short-messages",
+        "event",
+        "færdselsuheld",
+        category="transport",
+        severity="high",
+        score=5,
+    )
 
     rss_item = {
         "id": "police-ritzau-short-messages:15002803",
@@ -482,9 +632,108 @@ def test_police_sync_stores_generic_messages_without_event(tmp_path, monkeypatch
     assert api_list_events() == []
 
 
+def test_rebuild_events_recreates_police_events_from_raw_articles(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
+    init_db()
+    learn_test_location("place", "Vejlefjordbroen", 55.708, 9.624)
+    learn_test_term(
+        "police-ritzau-short-messages",
+        "event",
+        "færdselsuheld",
+        category="transport",
+        severity="high",
+        score=5,
+    )
+    article = {
+        "id": "police-ritzau-short-messages:rebuild-test",
+        "title": "Færdselsuheld på Østjyske Motorvej syd for Vejlefjordbroen",
+        "url": "https://via.ritzau.dk/pressemeddelelse/rebuild-test",
+        "published_at": "2026-06-20T11:55:07+00:00",
+        "summary": "Der er sket et færdselsuheld umiddelbart før Vejlefjordbroen.",
+        "publisher": "Sydøstjyllands Politi",
+        "publisher_city": "Horsens",
+    }
+    insert_raw_article(
+        article_id=article["id"],
+        source_id="police-ritzau-short-messages",
+        title=article["title"],
+        url=article["url"],
+        published_at=article["published_at"],
+        summary=article["summary"],
+        payload=json.dumps(article),
+    )
+
+    result = rebuild_source(SOURCES["police-ritzau-short-messages"])
+    events = api_list_events()
+
+    assert result["raw_rows"] == 1
+    assert result["created"] == 1
+    assert events[0].source == "Police/Ritzau Short Messages"
+    assert events[0].latitude == 55.708
+    assert events[0].longitude == 9.624
+
+
+def test_police_location_uses_incident_text_before_publisher_city(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
+    init_db()
+    learn_test_location("place", "Vejlefjordbroen", 55.708, 9.624)
+    learn_test_location("place", "Horsens", 55.861, 9.85)
+
+    location = police_location(
+        {
+            "title": "Færdselsuheld på Østjyske Motorvej",
+            "summary": (
+                "Vi modtog en anmeldelse om et færdselsuheld i Østjyske Motorvejs "
+                "nordgående spor umiddelbart før Vejlefjordbroen."
+            ),
+            "publisher_city": "Horsens",
+        }
+    )
+
+    assert location == (55.708, 9.624)
+
+
+def test_police_location_finds_island_mentions_in_incident_text(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
+    init_db()
+    learn_test_location("place", "Rømø", 55.145, 8.552)
+    learn_test_location("place", "Esbjerg", 55.476, 8.459)
+
+    location = police_location(
+        {
+            "title": "Vi er til stede ved demonstration på Rømø",
+            "summary": (
+                "Syd- & Sønderjyllands Politi er til stede ved den igangværende "
+                "demonstration på Rømø og opfordrer trafikanter i området til "
+                "at væbne sig med tålmodighed."
+            ),
+            "publisher_city": "Esbjerg",
+        }
+    )
+
+    assert location == (55.145, 8.552)
+
+
+def test_police_location_falls_back_to_publisher_city(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
+    init_db()
+    learn_test_location("place", "Horsens", 55.861, 9.85)
+
+    location = police_location(
+        {
+            "title": "Politiet er til stede",
+            "summary": "Vi følger situationen på stedet.",
+            "publisher_city": "Horsens",
+        }
+    )
+
+    assert location == (55.861, 9.85)
+
+
 def test_electricity_sync_creates_market_stress_event(tmp_path, monkeypatch):
     monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
     init_db()
+    learn_test_location("electricity_area", "DK2", 55.676, 12.568)
 
     monkeypatch.setattr(
         "argus.ingest.electricity.fetch_elspot_records",
@@ -582,6 +831,8 @@ def test_electricity_incidents_sync_skips_small_planned_notices(tmp_path, monkey
 def test_maritime_sync_creates_maritime_event(tmp_path, monkeypatch):
     monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
     init_db()
+    learn_test_location("place", "maritime learned area", 55.9397, 10.515)
+    learn_test_term("dma-news", "maritime", "navigation warning", category="maritime", score=5)
 
     monkeypatch.setattr(
         "argus.ingest.maritime.fetch_maritime_articles",
@@ -682,6 +933,8 @@ def test_niord_sync_skips_non_denmark_messages_without_geometry(tmp_path, monkey
 def test_odin_sync_creates_emergency_event(tmp_path, monkeypatch):
     monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
     init_db()
+    learn_test_location("station", "Hedensted", 55.77, 9.702)
+    learn_test_term("odin-incidents", "severity", "brand", category="emergency", severity="medium")
 
     monkeypatch.setattr(
         "argus.ingest.odin.fetch_odin_incidents",
@@ -714,6 +967,7 @@ def test_odin_sync_creates_emergency_event(tmp_path, monkeypatch):
 def test_odin_sync_falls_back_to_beredskab_location_when_station_is_empty(tmp_path, monkeypatch):
     monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
     init_db()
+    learn_test_location("beredskab", "Hovedstadens Beredskab", 55.676, 12.568)
 
     monkeypatch.setattr(
         "argus.ingest.odin.fetch_odin_incidents",
@@ -767,20 +1021,25 @@ def test_odin_rss_parser_uses_description_and_time_for_ids():
 def test_odin_station_location_uses_station_or_city_names(tmp_path, monkeypatch):
     monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
     init_db()
+    learn_test_location("station", "Vesterbro", 55.669, 12.544)
+    learn_test_location("station", "Hillerød", 55.927, 12.301)
+    learn_test_location("station", "Åsum - Odense", 55.396, 10.463)
 
     assert station_location("Hovedstadens Beredskab - Station Vesterbro") == (55.669, 12.544)
     assert station_location("Brandstation Hillerød") == (55.927, 12.301)
     assert station_location("Åsum - Odense") == (55.396, 10.463)
-    assert station_location("Ukendt Station") == DENMARK_CENTER
+    assert station_location("Ukendt Station") is None
 
 
 def test_odin_beredskab_location_uses_agency_name_as_fallback(tmp_path, monkeypatch):
     monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
     init_db()
+    learn_test_location("beredskab", "Hovedstadens Beredskab", 55.676, 12.568)
+    learn_test_location("beredskab", "Beredskab 4K", 55.458, 12.182)
 
     assert beredskab_location("Hovedstadens Beredskab") == (55.676, 12.568)
     assert beredskab_location("Beredskab 4K") == (55.458, 12.182)
-    assert beredskab_location("Ukendt Beredskab") == DENMARK_CENTER
+    assert beredskab_location("Ukendt Beredskab") is None
     assert (
         incident_location(
             {
@@ -804,7 +1063,7 @@ def test_odin_unknown_locations_are_recorded_as_candidates(tmp_path, monkeypatch
         }
     )
 
-    assert location == DENMARK_CENTER
+    assert location is None
     with connect() as connection:
         candidates = connection.execute(
             """

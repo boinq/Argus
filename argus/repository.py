@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Sequence
 
 from argus.database import connect
+from argus.knowledge import extract_candidate_terms, normalize_location_name
 from argus.models import (
     AppSettings,
     AppSettingsUpdate,
@@ -119,6 +120,7 @@ def upsert_event(payload: EventCreate) -> tuple[Event, bool]:
             )
             event_id = int(cursor.lastrowid)
             created = True
+    learn_terms_from_event(payload)
     event = get_event(event_id)
     if event is None:
         raise RuntimeError("upserted event could not be read")
@@ -140,6 +142,111 @@ def update_event(event_id: int, payload: EventUpdate) -> Event | None:
         if cursor.rowcount == 0:
             return None
     return get_event(event_id)
+
+
+def learn_terms_from_event(payload: EventCreate) -> None:
+    source_id = source_id_from_event_source(payload.source)
+    rule_group = rule_group_from_event(source_id)
+    if source_id is None or rule_group is None:
+        return
+    category = payload.category if rule_group in {"category", "event", "promote", "maritime"} else ""
+    severity = payload.severity if rule_group in {"severity", "event", "promote"} else ""
+    terms = extract_candidate_terms(f"{payload.title} {payload.description}", limit=12)
+    now = datetime.now(timezone.utc).isoformat()
+    with connect() as connection:
+        connection.executemany(
+            """
+            INSERT INTO classification_terms (
+                source_id, rule_group, term, category, severity, score, source, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, 'learned', ?)
+            ON CONFLICT(source_id, rule_group, term) DO UPDATE SET
+                category = CASE
+                    WHEN classification_terms.source IN ('learned', 'candidate') THEN excluded.category
+                    ELSE classification_terms.category
+                END,
+                severity = CASE
+                    WHEN classification_terms.source IN ('learned', 'candidate') THEN excluded.severity
+                    ELSE classification_terms.severity
+                END,
+                score = CASE
+                    WHEN classification_terms.source IN ('learned', 'candidate')
+                    THEN max(classification_terms.score, excluded.score)
+                    ELSE classification_terms.score
+                END,
+                updated_at = excluded.updated_at
+            """,
+            [
+                (source_id, rule_group, term, category, severity, learned_term_score(term), now)
+                for term in terms
+            ],
+        )
+
+
+def upsert_classification_term(
+    *,
+    source_id: str,
+    rule_group: str,
+    term: str,
+    category: str = "",
+    severity: str = "",
+    score: int = 1,
+    source: str = "learned",
+) -> None:
+    with connect() as connection:
+        connection.execute(
+            """
+            INSERT INTO classification_terms (
+                source_id, rule_group, term, category, severity, score, source, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(source_id, rule_group, term) DO UPDATE SET
+                category = excluded.category,
+                severity = excluded.severity,
+                score = excluded.score,
+                source = excluded.source,
+                updated_at = datetime('now')
+            """,
+            (source_id, rule_group, term, category, severity, score, source),
+        )
+
+
+def source_id_from_event_source(source: str) -> str | None:
+    normalized = source.casefold()
+    with connect() as connection:
+        exact = connection.execute(
+            "SELECT id FROM sources WHERE lower(name) = lower(?) LIMIT 1",
+            (source,),
+        ).fetchone()
+        if exact is not None:
+            return str(exact["id"])
+        rows = connection.execute("SELECT id, name FROM sources").fetchall()
+    for row in rows:
+        name = str(row["name"]).casefold()
+        if name in normalized or normalized in name:
+            return str(row["id"])
+    return None
+
+
+def rule_group_from_event(source_id: str | None) -> str | None:
+    if source_id is None:
+        return None
+    if source_id == "dr-news":
+        return "category"
+    if source_id == "dma-news":
+        return "maritime"
+    if source_id == "police-ritzau-short-messages":
+        return "event"
+    if source_id == "health-alerts":
+        return "promote"
+    if source_id in {"trafikinfo-events", "odin-incidents", "niord-messages"}:
+        return "severity"
+    return None
+
+
+def learned_term_score(term: str) -> int:
+    words = term.split()
+    return max(1, min(5, len(words) + 1))
 
 
 def get_settings() -> AppSettings:
@@ -277,7 +384,16 @@ def insert_raw_observation(
                 now,
             ),
         )
-    return cursor.rowcount > 0
+        was_inserted = cursor.rowcount > 0
+        upsert_location_alias_in_connection(
+            connection,
+            kind="station",
+            name=station_id,
+            latitude=latitude,
+            longitude=longitude,
+            source="learned",
+        )
+    return was_inserted
 
 
 def insert_raw_article(
@@ -308,7 +424,15 @@ def insert_raw_article(
             """,
             (article_id, source_id, title, url, published_at, summary, payload, now),
         )
-    return cursor.rowcount > 0
+        was_changed = cursor.rowcount > 0
+        record_classification_term_candidates_in_connection(
+            connection,
+            source_id=source_id,
+            title=title,
+            text=f"{title} {summary}",
+            now=now,
+        )
+    return was_changed
 
 
 def delete_events_by_source(source: str) -> int:
@@ -346,6 +470,106 @@ def find_location_alias(
     if row is None:
         return None
     return (float(row["latitude"]), float(row["longitude"]))
+
+
+def get_location_alias(kind: str, name: str) -> tuple[float, float] | None:
+    normalized_name = normalize_location_name(name)
+    with connect() as connection:
+        row = connection.execute(
+            """
+            SELECT latitude, longitude
+            FROM location_aliases
+            WHERE kind = ?
+              AND normalized_name = ?
+            LIMIT 1
+            """,
+            (kind, normalized_name),
+        ).fetchone()
+    if row is None:
+        return None
+    return (float(row["latitude"]), float(row["longitude"]))
+
+
+def get_fallback_location() -> tuple[float, float] | None:
+    with connect() as connection:
+        row = connection.execute(
+            """
+            SELECT avg(latitude) AS latitude, avg(longitude) AS longitude
+            FROM location_aliases
+            WHERE source NOT IN ('seed', 'bootstrap')
+            """
+        ).fetchone()
+        if row and row["latitude"] is not None and row["longitude"] is not None:
+            return (float(row["latitude"]), float(row["longitude"]))
+        row = connection.execute(
+            """
+            SELECT avg(latitude) AS latitude, avg(longitude) AS longitude
+            FROM events
+            """
+        ).fetchone()
+    if row and row["latitude"] is not None and row["longitude"] is not None:
+        return (float(row["latitude"]), float(row["longitude"]))
+    return None
+
+
+def upsert_location_alias(
+    *,
+    kind: str,
+    name: str,
+    latitude: float,
+    longitude: float,
+    source: str = "learned",
+) -> None:
+    with connect() as connection:
+        upsert_location_alias_in_connection(
+            connection,
+            kind=kind,
+            name=name,
+            latitude=latitude,
+            longitude=longitude,
+            source=source,
+        )
+
+
+def upsert_location_alias_in_connection(
+    connection: sqlite3.Connection,
+    *,
+    kind: str,
+    name: str,
+    latitude: float,
+    longitude: float,
+    source: str,
+) -> None:
+    normalized_name = normalize_location_name(name)
+    if not normalized_name:
+        return
+    connection.execute(
+        """
+        INSERT INTO location_aliases (
+            kind, name, normalized_name, latitude, longitude, source, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(kind, normalized_name) DO UPDATE SET
+            name = CASE
+                WHEN location_aliases.source IN ('seed', 'bootstrap', 'learned') THEN excluded.name
+                ELSE location_aliases.name
+            END,
+            latitude = CASE
+                WHEN location_aliases.source IN ('seed', 'bootstrap', 'learned') THEN excluded.latitude
+                ELSE location_aliases.latitude
+            END,
+            longitude = CASE
+                WHEN location_aliases.source IN ('seed', 'bootstrap', 'learned') THEN excluded.longitude
+                ELSE location_aliases.longitude
+            END,
+            source = CASE
+                WHEN location_aliases.source IN ('seed', 'bootstrap') THEN location_aliases.source
+                ELSE excluded.source
+            END,
+            updated_at = datetime('now')
+        """,
+        (kind, name, normalized_name, latitude, longitude, source),
+    )
 
 
 def list_location_aliases(*, kinds: Sequence[str]) -> list[sqlite3.Row]:
@@ -392,3 +616,87 @@ def record_location_candidate(
             """,
             (source_id, kind, name, normalized_name, context[:1000], now, now),
         )
+
+
+def record_classification_term_candidates(
+    *,
+    source_id: str,
+    title: str,
+    text: str,
+) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    with connect() as connection:
+        record_classification_term_candidates_in_connection(
+            connection,
+            source_id=source_id,
+            title=title,
+            text=text,
+            now=now,
+        )
+
+
+def record_classification_term_candidates_in_connection(
+    connection: sqlite3.Connection,
+    *,
+    source_id: str,
+    title: str,
+    text: str,
+    now: str,
+) -> None:
+    rows = [
+        (source_id, term, normalize_location_name(term), title[:300], now, now)
+        for term in extract_candidate_terms(text)
+    ]
+    if not rows:
+        return
+    connection.executemany(
+        """
+        INSERT INTO classification_term_candidates (
+            source_id, term, normalized_term, sample_title, first_seen, last_seen
+        )
+        SELECT ?, ?, ?, ?, ?, ?
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM classification_terms
+            WHERE classification_terms.source_id = ?
+              AND classification_terms.term = ?
+        )
+        ON CONFLICT(source_id, normalized_term) DO UPDATE SET
+            term = excluded.term,
+            sample_title = excluded.sample_title,
+            seen_count = classification_term_candidates.seen_count + 1,
+            last_seen = excluded.last_seen
+        """,
+        [(*row, row[0], row[1]) for row in rows],
+    )
+
+
+def list_classification_terms(
+    source_id: str,
+    *,
+    rule_group: str | None = None,
+) -> list[sqlite3.Row]:
+    clauses = ["source_id = ?"]
+    params: list[object] = [source_id]
+    if rule_group is not None:
+        clauses.append("rule_group = ?")
+        params.append(rule_group)
+    try:
+        with connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT source_id, rule_group, term, category, severity, score
+                FROM classification_terms
+                WHERE {' AND '.join(clauses)}
+                ORDER BY score DESC, length(term) DESC, term
+                """,
+                params,
+            ).fetchall()
+    except sqlite3.OperationalError as error:
+        if "no such table" not in str(error):
+            raise
+        from argus.database import init_db
+
+        init_db()
+        return list_classification_terms(source_id, rule_group=rule_group)
+    return rows

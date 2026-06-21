@@ -8,12 +8,6 @@ from typing import Any
 from xml.etree import ElementTree
 
 
-DENMARK_CENTER = (55.9397, 10.515)
-COPENHAGEN = (55.676, 12.568)
-DK1_CENTER = (56.2639, 9.5018)
-DK2_CENTER = (55.676, 12.568)
-
-
 def clean_html(value: str | None) -> str:
     if not value:
         return ""

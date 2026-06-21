@@ -11,7 +11,9 @@ import httpx
 from argus.models import EventCreate, IngestResult
 from argus.repository import (
     delete_events_by_source,
+    get_fallback_location,
     insert_raw_article,
+    list_classification_terms,
     update_source_status,
     upsert_event,
 )
@@ -20,21 +22,6 @@ from argus.repository import (
 SOURCE_ID = "health-alerts"
 ENDPOINT = "https://www.sst.dk/nyheder"
 SST_BASE_URL = "https://www.sst.dk"
-HEALTH_KEYWORDS = (
-    "alment farlig",
-    "anbefalinger til rejsende",
-    "beredskab",
-    "hantavirus",
-    "influenza",
-    "kritiske infrastruktur",
-    "opioid",
-    "rs-virus",
-    "smitsomme sygdomme",
-    "udbrud",
-    "vaccin",
-)
-
-
 def sync_health_alerts(limit: int = 25) -> IngestResult:
     try:
         articles = fetch_health_articles(limit=limit)
@@ -167,15 +154,24 @@ def parse_danish_date(value: str | None) -> str | None:
 
 def event_from_article(article: dict[str, Any]) -> EventCreate | None:
     haystack = f"{article['title']} {article.get('summary', '')}".lower()
-    if not any(keyword in haystack for keyword in HEALTH_KEYWORDS):
+    matches = [
+        row
+        for row in list_classification_terms(SOURCE_ID, rule_group="promote")
+        if str(row["term"]).lower() in haystack
+    ]
+    if not matches:
         return None
 
-    severity = "high" if any(word in haystack for word in ("alment farlig", "udbrud", "kritiske")) else "medium"
+    severity = "high" if any(row["severity"] == "high" for row in matches) else "medium"
     starts_at = (
         datetime.fromisoformat(article["published_at"])
         if article.get("published_at")
         else datetime.now(timezone.utc)
     )
+    location = get_fallback_location()
+    if location is None:
+        return None
+    latitude, longitude = location
     return EventCreate(
         title=f"SST health notice: {article['title']}"[:140],
         category="health",
@@ -183,8 +179,8 @@ def event_from_article(article: dict[str, Any]) -> EventCreate | None:
         status="monitoring",
         source="Sundhedsstyrelsen",
         description=(article.get("summary") or article["url"])[:1000],
-        latitude=55.676,
-        longitude=12.568,
+        latitude=latitude,
+        longitude=longitude,
         starts_at=starts_at,
         ends_at=None,
     )

@@ -6,10 +6,16 @@ from typing import Any
 
 import httpx
 
-from argus.ingest.common import COPENHAGEN, parse_rss_items
+from argus.ingest.common import parse_rss_items
 from argus.ingest.evaluator import evaluate_news_relevance
 from argus.models import EventCreate, IngestResult
-from argus.repository import delete_events_by_source, insert_raw_article, update_source_status, upsert_event
+from argus.repository import (
+    delete_events_by_source,
+    get_fallback_location,
+    insert_raw_article,
+    update_source_status,
+    upsert_event,
+)
 
 
 SOURCE_ID = "dr-news"
@@ -83,6 +89,10 @@ def event_from_article(article: dict[str, Any]) -> EventCreate | None:
         if article.get("published_at")
         else datetime.now(timezone.utc)
     )
+    location = get_fallback_location()
+    if location is None:
+        return None
+    latitude, longitude = location
     return EventCreate(
         title=f"DR news signal: {article['title']}"[:140],
         category=evaluation.category,
@@ -90,8 +100,8 @@ def event_from_article(article: dict[str, Any]) -> EventCreate | None:
         status="monitoring",
         source="DR Nyheder",
         description=(article.get("summary") or article["url"])[:1000],
-        latitude=COPENHAGEN[0],
-        longitude=COPENHAGEN[1],
+        latitude=latitude,
+        longitude=longitude,
         starts_at=starts_at,
         ends_at=None,
     )

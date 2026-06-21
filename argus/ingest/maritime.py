@@ -8,10 +8,16 @@ from typing import Any
 
 import httpx
 
-from argus.ingest.common import DENMARK_CENTER, clean_html
+from argus.ingest.common import clean_html
 from argus.ingest.evaluator import evaluate_maritime_relevance
 from argus.models import EventCreate, IngestResult
-from argus.repository import delete_events_by_source, insert_raw_article, update_source_status, upsert_event
+from argus.repository import (
+    delete_events_by_source,
+    get_fallback_location,
+    insert_raw_article,
+    update_source_status,
+    upsert_event,
+)
 
 
 SOURCE_ID = "dma-news"
@@ -109,6 +115,10 @@ def event_from_article(article: dict[str, Any]) -> EventCreate | None:
         if article.get("published_at")
         else datetime.now(timezone.utc)
     )
+    location = get_fallback_location()
+    if location is None:
+        return None
+    latitude, longitude = location
     return EventCreate(
         title=f"DMA maritime notice: {article['title']}"[:140],
         category="maritime",
@@ -116,8 +126,8 @@ def event_from_article(article: dict[str, Any]) -> EventCreate | None:
         status="monitoring",
         source="Danish Maritime Authority",
         description=(article.get("summary") or article["url"])[:1000],
-        latitude=DENMARK_CENTER[0],
-        longitude=DENMARK_CENTER[1],
+        latitude=latitude,
+        longitude=longitude,
         starts_at=starts_at,
         ends_at=None,
     )

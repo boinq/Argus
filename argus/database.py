@@ -6,9 +6,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from argus.location_seed import LOCATION_ALIASES
-
-
 DEFAULT_DB_PATH = "data/argus.db"
 
 
@@ -113,7 +110,7 @@ def init_db() -> None:
                 normalized_name TEXT NOT NULL,
                 latitude REAL NOT NULL,
                 longitude REAL NOT NULL,
-                source TEXT NOT NULL DEFAULT 'seed',
+                source TEXT NOT NULL DEFAULT 'learned',
                 updated_at TEXT NOT NULL,
                 UNIQUE(kind, normalized_name)
             )
@@ -137,14 +134,45 @@ def init_db() -> None:
         )
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS classification_terms (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_id TEXT NOT NULL,
+                rule_group TEXT NOT NULL,
+                term TEXT NOT NULL,
+                category TEXT NOT NULL DEFAULT '',
+                severity TEXT NOT NULL DEFAULT '',
+                score INTEGER NOT NULL DEFAULT 0,
+                source TEXT NOT NULL DEFAULT 'learned',
+                updated_at TEXT NOT NULL,
+                UNIQUE(source_id, rule_group, term)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS classification_term_candidates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_id TEXT NOT NULL,
+                term TEXT NOT NULL,
+                normalized_term TEXT NOT NULL,
+                seen_count INTEGER NOT NULL DEFAULT 1,
+                sample_title TEXT NOT NULL,
+                first_seen TEXT NOT NULL,
+                last_seen TEXT NOT NULL,
+                UNIQUE(source_id, normalized_term)
+            )
+            """
+        )
+        connection.execute(
+            """
             CREATE UNIQUE INDEX IF NOT EXISTS idx_events_source_title
             ON events (source, title)
             """
         )
         seed_settings(connection)
         seed_sources(connection)
-        seed_location_aliases(connection)
         cleanup_legacy_seed_data(connection)
+        cleanup_bootstrap_knowledge(connection)
 
 
 def seed_settings(connection: sqlite3.Connection) -> None:
@@ -288,77 +316,6 @@ def seed_sources(connection: sqlite3.Connection) -> None:
     )
 
 
-def seed_location_aliases(connection: sqlite3.Connection) -> None:
-    rows = [
-        (
-            kind,
-            name,
-            normalize_location_name(name),
-            latitude,
-            longitude,
-            "seed",
-        )
-        for kind, name, latitude, longitude in LOCATION_ALIASES
-    ]
-    connection.executemany(
-        """
-        INSERT INTO location_aliases (
-            kind, name, normalized_name, latitude, longitude, source, updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-        ON CONFLICT(kind, normalized_name) DO UPDATE SET
-            name = CASE
-                WHEN location_aliases.source = 'seed' THEN excluded.name
-                ELSE location_aliases.name
-            END,
-            latitude = CASE
-                WHEN location_aliases.source = 'seed' THEN excluded.latitude
-                ELSE location_aliases.latitude
-            END,
-            longitude = CASE
-                WHEN location_aliases.source = 'seed' THEN excluded.longitude
-                ELSE location_aliases.longitude
-            END,
-            updated_at = datetime('now')
-        """,
-        rows,
-    )
-    connection.execute(
-        """
-        DELETE FROM location_candidates
-        WHERE EXISTS (
-            SELECT 1
-            FROM location_aliases
-            WHERE location_aliases.kind = location_candidates.kind
-              AND location_aliases.normalized_name = location_candidates.normalized_name
-        )
-        """
-    )
-
-
-def normalize_location_name(name: str) -> str:
-    normalized = name.strip().lower()
-    replacements = {
-        "æ": "ae",
-        "ø": "o",
-        "å": "aa",
-        "ä": "ae",
-        "ö": "o",
-        "ü": "u",
-    }
-    for source, target in replacements.items():
-        normalized = normalized.replace(source, target)
-    normalized = normalized.replace("&", " og ")
-    normalized = sqlite_safe_space(normalized)
-    return " ".join(normalized.split())
-
-
-def sqlite_safe_space(value: str) -> str:
-    for character in "/,;:._-":
-        value = value.replace(character, " ")
-    return value
-
-
 def cleanup_legacy_seed_data(connection: sqlite3.Connection) -> None:
     legacy_seed_sources = (
         "DMI coastal forecast",
@@ -371,3 +328,8 @@ def cleanup_legacy_seed_data(connection: sqlite3.Connection) -> None:
         f"DELETE FROM events WHERE source IN ({','.join('?' for _ in legacy_seed_sources)})",
         legacy_seed_sources,
     )
+
+
+def cleanup_bootstrap_knowledge(connection: sqlite3.Connection) -> None:
+    connection.execute("DELETE FROM location_aliases WHERE source IN ('seed', 'bootstrap')")
+    connection.execute("DELETE FROM classification_terms WHERE source IN ('seed', 'bootstrap')")

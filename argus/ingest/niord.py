@@ -6,9 +6,16 @@ from typing import Any
 
 import httpx
 
-from argus.ingest.common import DENMARK_CENTER, clean_html
+from argus.ingest.common import clean_html
 from argus.models import EventCreate, IngestResult
-from argus.repository import delete_events_by_source, insert_raw_article, update_source_status, upsert_event
+from argus.repository import (
+    delete_events_by_source,
+    get_fallback_location,
+    insert_raw_article,
+    list_classification_terms,
+    update_source_status,
+    upsert_event,
+)
 
 
 SOURCE_ID = "niord-messages"
@@ -100,7 +107,9 @@ def event_from_message(message: dict[str, Any]) -> EventCreate | None:
     if location is None:
         if not has_denmark_area(message):
             return None
-        location = DENMARK_CENTER
+        location = get_fallback_location()
+        if location is None:
+            return None
     latitude, longitude = location
 
     starts_at = parse_niord_time(message.get("publishDateFrom") or message.get("created")) or datetime.now(timezone.utc)
@@ -211,10 +220,9 @@ def in_denmark(latitude: float, longitude: float) -> bool:
 
 def niord_severity(text: str) -> str:
     normalized = text.lower()
-    if any(keyword in normalized for keyword in ("closed", "spærret", "gnss", "ais", "forbudsområde")):
-        return "high"
-    if any(keyword in normalized for keyword in ("unlit", "slukket", "wreck", "vrag", "warning", "advarsel")):
-        return "medium"
+    for row in list_classification_terms(SOURCE_ID, rule_group="severity"):
+        if str(row["term"]).lower() in normalized:
+            return str(row["severity"])
     return "low"
 
 
