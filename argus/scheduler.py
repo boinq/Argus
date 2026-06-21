@@ -26,6 +26,7 @@ class PollJob:
     last_result: str | None = None
     last_error: str | None = None
     running: bool = False
+    paused: bool = False
     runs: int = 0
     failures: int = 0
 
@@ -64,29 +65,44 @@ class PollScheduler:
         job = self.jobs[job_id]
         return await self._run_job(job)
 
+    def pause(self, job_id: str) -> PollJob:
+        job = self.jobs[job_id]
+        job.paused = True
+        job.next_run_at = None
+        return job
+
+    def resume(self, job_id: str) -> PollJob:
+        job = self.jobs[job_id]
+        job.paused = False
+        return job
+
     def snapshot(self) -> list[dict[str, object]]:
-        return [
-            {
-                "id": job.id,
-                "source_id": job.source_id,
-                "name": job.name,
-                "interval_seconds": job.interval_seconds,
-                "enabled": self.enabled,
-                "running": job.running,
-                "runs": job.runs,
-                "failures": job.failures,
-                "last_started": job.last_started,
-                "last_finished": job.last_finished,
-                "next_run_at": job.next_run_at,
-                "last_result": job.last_result,
-                "last_error": job.last_error,
-            }
-            for job in self.jobs.values()
-        ]
+        return [self.snapshot_job(job) for job in self.jobs.values()]
+
+    def snapshot_job(self, job: PollJob) -> dict[str, object]:
+        return {
+            "id": job.id,
+            "source_id": job.source_id,
+            "name": job.name,
+            "interval_seconds": job.interval_seconds,
+            "enabled": self.enabled,
+            "running": job.running,
+            "paused": job.paused,
+            "runs": job.runs,
+            "failures": job.failures,
+            "last_started": job.last_started,
+            "last_finished": job.last_finished,
+            "next_run_at": job.next_run_at,
+            "last_result": job.last_result,
+            "last_error": job.last_error,
+        }
 
     async def _run_loop(self, job: PollJob) -> None:
         await self._sleep_until_next_run(job, job.initial_delay_seconds)
         while not self.stop_event.is_set():
+            await self._wait_if_paused(job)
+            if self.stop_event.is_set():
+                break
             job.next_run_at = None
             await self._run_job(job)
             await self._sleep_until_next_run(job, job.interval_seconds)
@@ -118,15 +134,28 @@ class PollScheduler:
             job.running = False
             job.last_finished = datetime.now(timezone.utc)
 
-    async def _sleep_or_stop(self, seconds: int) -> None:
+    async def _wait_if_paused(self, job: PollJob) -> None:
+        while job.paused and not self.stop_event.is_set():
+            job.next_run_at = None
+            await self._sleep_or_stop(1)
+
+    async def _sleep_or_stop(self, seconds: float) -> None:
         try:
             await asyncio.wait_for(self.stop_event.wait(), timeout=seconds)
         except TimeoutError:
             return
 
     async def _sleep_until_next_run(self, job: PollJob, seconds: int) -> None:
-        job.next_run_at = datetime.now(timezone.utc) + timedelta(seconds=seconds)
-        await self._sleep_or_stop(seconds)
+        deadline = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+        job.next_run_at = deadline
+        while not self.stop_event.is_set():
+            if job.paused:
+                job.next_run_at = None
+                return
+            remaining = (deadline - datetime.now(timezone.utc)).total_seconds()
+            if remaining <= 0:
+                return
+            await self._sleep_or_stop(min(remaining, 1))
 
 
 def env_bool(name: str, default: bool) -> bool:

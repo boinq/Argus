@@ -338,6 +338,22 @@ async def api_run_scheduler_job(job_id: str) -> IngestResult:
     return await scheduler.run_once(job_id)
 
 
+@app.post("/api/scheduler/jobs/{job_id}/pause", response_model=SchedulerJobStatus)
+def api_pause_scheduler_job(job_id: str) -> SchedulerJobStatus:
+    if job_id not in scheduler.jobs:
+        raise HTTPException(status_code=404, detail="Scheduler job not found")
+    job = scheduler.pause(job_id)
+    return SchedulerJobStatus.model_validate(scheduler.snapshot_job(job))
+
+
+@app.post("/api/scheduler/jobs/{job_id}/resume", response_model=SchedulerJobStatus)
+def api_resume_scheduler_job(job_id: str) -> SchedulerJobStatus:
+    if job_id not in scheduler.jobs:
+        raise HTTPException(status_code=404, detail="Scheduler job not found")
+    job = scheduler.resume(job_id)
+    return SchedulerJobStatus.model_validate(scheduler.snapshot_job(job))
+
+
 @app.get("/api/events/{event_id}", response_model=Event)
 def api_get_event(event_id: int) -> Event:
     event = get_event(event_id)

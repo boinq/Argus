@@ -18,7 +18,7 @@ import {
   renderSources as renderSourcesPanel,
   renderSourceSyncTargets as renderSyncTargets,
   updateSourceCountdowns,
-} from "./js/sources-panel.js";
+} from "./js/sources-panel.js?v=20260621-poll-controls";
 import { stationDetailHtml, stationDetailLoadingHtml } from "./js/station-detail.js";
 import {
   categoryLabel,
@@ -716,6 +716,37 @@ async function refreshSchedulerJobs() {
   }
 }
 
+async function setSourcePolling(button) {
+  const jobId = button.dataset.sourcePollJob;
+  const action = button.dataset.sourcePollAction;
+  if (!jobId || !["pause", "resume"].includes(action)) {
+    return;
+  }
+  button.disabled = true;
+  sourceNote.textContent = `${action === "pause" ? "Pausing" : "Resuming"} polling...`;
+  sourceNote.classList.remove("error");
+  try {
+    const response = await fetch(
+      `api/scheduler/jobs/${encodeURIComponent(jobId)}/${action}`,
+      { method: "POST" },
+    );
+    if (!response.ok) {
+      throw new Error(`Scheduler API responded with ${response.status}`);
+    }
+    const updatedJob = await response.json();
+    schedulerJobs = schedulerJobs.map((job) => (job.id === updatedJob.id ? updatedJob : job));
+    renderSourceSyncTargets();
+    renderSources();
+    sourceNote.textContent = action === "pause" ? "Polling paused." : "Polling resumed.";
+    sourceNote.classList.remove("error");
+  } catch (error) {
+    sourceNote.textContent = error.message;
+    sourceNote.classList.add("error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function loadMl() {
   try {
     if (!sources.length) {
@@ -1097,6 +1128,13 @@ layersNone.addEventListener("click", () => {
   renderMap([]);
 });
 sourceFilter.addEventListener("change", renderSources);
+sourceList.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-source-poll-action]");
+  if (button) {
+    event.preventDefault();
+    setSourcePolling(button);
+  }
+});
 sourceSyncTarget.addEventListener("change", () => {
   syncSource.disabled = sourceSyncTarget.value === "";
 });

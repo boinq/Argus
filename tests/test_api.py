@@ -33,7 +33,9 @@ from argus.main import (
     api_ml_promote_term,
     api_ml_score,
     api_ml_terms,
+    api_pause_scheduler_job,
     api_reset_database,
+    api_resume_scheduler_job,
     api_scheduler_jobs,
     api_sync_electricity,
     api_sync_electricity_incidents,
@@ -454,6 +456,21 @@ def test_scheduler_jobs_are_returned():
     assert job_intervals["police-ritzau-short-messages"] == 600
     assert job_intervals["trafikinfo-events"] == 600
     assert "health-alerts" in job_intervals
+    assert all(job.paused is False for job in jobs)
+
+
+def test_scheduler_job_can_be_paused_and_resumed():
+    paused = api_pause_scheduler_job("dmi-metobs")
+
+    assert paused.id == "dmi-metobs"
+    assert paused.paused is True
+    assert paused.next_run_at is None
+    assert next(job for job in api_scheduler_jobs() if job.id == "dmi-metobs").paused is True
+
+    resumed = api_resume_scheduler_job("dmi-metobs")
+
+    assert resumed.id == "dmi-metobs"
+    assert resumed.paused is False
 
 
 def test_scheduler_staggers_initial_next_runs(monkeypatch):

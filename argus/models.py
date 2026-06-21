@@ -123,6 +123,7 @@ class SchedulerJobStatus(BaseModel):
     interval_seconds: int
     enabled: bool
     running: bool
+    paused: bool
     runs: int
     failures: int
     last_started: datetime | None = None

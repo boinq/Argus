@@ -50,7 +50,8 @@ export function updateSourceCountdowns(root = document) {
     const nextRunAt = element.dataset.nextRunAt;
     const running = element.dataset.running === "true";
     const enabled = element.dataset.enabled === "true";
-    element.textContent = countdownLabel(nextRunAt, { running, enabled });
+    const paused = element.dataset.paused === "true";
+    element.textContent = countdownLabel(nextRunAt, { running, enabled, paused });
   });
 }
 
@@ -63,9 +64,12 @@ function sourceCard(source, job) {
     <article class="source-card">
       <div class="source-card-header">
         <h3>${escapeHtml(source.name)}</h3>
-        <span class="tag source-status ${escapeHtml(source.status)}">
-          ${escapeHtml(source.status)}
-        </span>
+        <div class="source-card-badges">
+          ${job?.paused ? '<span class="tag source-status paused">paused</span>' : ""}
+          <span class="tag source-status ${escapeHtml(source.status)}">
+            ${escapeHtml(source.status)}
+          </span>
+        </div>
       </div>
       <dl class="source-details">
         <div>
@@ -82,7 +86,7 @@ function sourceCard(source, job) {
         </div>
         <div>
           <dt>Polling</dt>
-          <dd>${job ? `${job.enabled ? "Enabled" : "Disabled"} / ${job.interval_seconds}s` : "Not scheduled"}</dd>
+          <dd>${job ? pollingLabel(job) : "Not scheduled"}</dd>
         </div>
         <div>
           <dt>Next poll</dt>
@@ -107,7 +111,32 @@ function sourceCard(source, job) {
           <dd>${escapeHtml(source.last_error || "None")}</dd>
         </div>
       </dl>
+      ${job ? sourceActions(job) : ""}
     </article>
+  `;
+}
+
+function pollingLabel(job) {
+  if (!job.enabled) {
+    return `Disabled / ${job.interval_seconds}s`;
+  }
+  return `${job.paused ? "Paused" : "Enabled"} / ${job.interval_seconds}s`;
+}
+
+function sourceActions(job) {
+  const action = job.paused ? "resume" : "pause";
+  const label = job.paused ? "Resume polling" : "Pause polling";
+  return `
+    <div class="source-actions">
+      <button
+        type="button"
+        data-source-poll-action="${action}"
+        data-source-poll-job="${escapeHtml(job.id)}"
+        ${job.running ? "disabled" : ""}
+      >
+        ${escapeHtml(label)}
+      </button>
+    </div>
   `;
 }
 
@@ -117,15 +146,23 @@ function countdownElement(job) {
       data-next-run-at="${escapeHtml(job.next_run_at || "")}"
       data-running="${job.running ? "true" : "false"}"
       data-enabled="${job.enabled ? "true" : "false"}"
+      data-paused="${job.paused ? "true" : "false"}"
     >
-      ${escapeHtml(countdownLabel(job.next_run_at, { running: job.running, enabled: job.enabled }))}
+      ${escapeHtml(countdownLabel(job.next_run_at, {
+        running: job.running,
+        enabled: job.enabled,
+        paused: job.paused,
+      }))}
     </span>
   `;
 }
 
-function countdownLabel(nextRunAt, { running, enabled }) {
+function countdownLabel(nextRunAt, { running, enabled, paused }) {
   if (running) {
     return "Running now";
+  }
+  if (paused) {
+    return "Paused";
   }
   if (!enabled) {
     return "Scheduler disabled";
