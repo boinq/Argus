@@ -7,6 +7,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from argus.models import IngestResult
+from argus.repository import (
+    get_scheduler_job_status,
+    scheduler_job_paused,
+    set_scheduler_job_paused,
+    set_scheduler_job_status,
+)
 
 
 IngestJob = Callable[[], IngestResult]
@@ -69,18 +75,23 @@ class PollScheduler:
         job = self.jobs[job_id]
         job.paused = True
         job.next_run_at = None
+        set_scheduler_job_paused(job_id, True)
+        self.persist_job_status(job)
         return job
 
     def resume(self, job_id: str) -> PollJob:
         job = self.jobs[job_id]
         job.paused = False
+        set_scheduler_job_paused(job_id, False)
+        self.persist_job_status(job)
         return job
 
     def snapshot(self) -> list[dict[str, object]]:
         return [self.snapshot_job(job) for job in self.jobs.values()]
 
     def snapshot_job(self, job: PollJob) -> dict[str, object]:
-        return {
+        self.sync_job_control(job)
+        status = {
             "id": job.id,
             "source_id": job.source_id,
             "name": job.name,
@@ -96,6 +107,13 @@ class PollScheduler:
             "last_result": job.last_result,
             "last_error": job.last_error,
         }
+        stored = get_scheduler_job_status(job.id)
+        if stored:
+            status.update(stored)
+        if job.paused:
+            status["next_run_at"] = None
+            status["running"] = False
+        return status
 
     async def _run_loop(self, job: PollJob) -> None:
         await self._sleep_until_next_run(job, job.initial_delay_seconds)
@@ -120,6 +138,7 @@ class PollScheduler:
 
         job.running = True
         job.last_started = datetime.now(timezone.utc)
+        self.persist_job_status(job)
         try:
             result = await asyncio.to_thread(job.handler)
             job.runs += 1
@@ -133,11 +152,15 @@ class PollScheduler:
         finally:
             job.running = False
             job.last_finished = datetime.now(timezone.utc)
+            self.persist_job_status(job)
 
     async def _wait_if_paused(self, job: PollJob) -> None:
+        self.sync_job_control(job)
         while job.paused and not self.stop_event.is_set():
             job.next_run_at = None
+            self.persist_job_status(job)
             await self._sleep_or_stop(1)
+            self.sync_job_control(job)
 
     async def _sleep_or_stop(self, seconds: float) -> None:
         try:
@@ -148,14 +171,33 @@ class PollScheduler:
     async def _sleep_until_next_run(self, job: PollJob, seconds: int) -> None:
         deadline = datetime.now(timezone.utc) + timedelta(seconds=seconds)
         job.next_run_at = deadline
+        self.persist_job_status(job)
         while not self.stop_event.is_set():
+            self.sync_job_control(job)
             if job.paused:
                 job.next_run_at = None
+                self.persist_job_status(job)
                 return
             remaining = (deadline - datetime.now(timezone.utc)).total_seconds()
             if remaining <= 0:
                 return
             await self._sleep_or_stop(min(remaining, 1))
+
+    def sync_job_control(self, job: PollJob) -> None:
+        job.paused = scheduler_job_paused(job.id)
+
+    def persist_job_status(self, job: PollJob) -> None:
+        set_scheduler_job_status(
+            job_id=job.id,
+            running=job.running,
+            runs=job.runs,
+            failures=job.failures,
+            last_started=job.last_started,
+            last_finished=job.last_finished,
+            next_run_at=job.next_run_at,
+            last_result=job.last_result,
+            last_error=job.last_error,
+        )
 
 
 def env_bool(name: str, default: bool) -> bool:

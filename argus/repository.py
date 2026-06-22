@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import os
+import socket
 import sqlite3
 from datetime import datetime, timezone
 from typing import Sequence
+
+import httpx
 
 from argus.database import connect, db_path, init_db
 from argus.knowledge import extract_candidate_terms, normalize_location_name
@@ -13,6 +17,7 @@ from argus.models import (
     EventCreate,
     EventUpdate,
     RawObservation,
+    SensorStatus,
     Source,
 )
 
@@ -21,6 +26,38 @@ EVENT_COLUMNS = """
     id, title, category, severity, status, source, description, latitude,
     longitude, starts_at, ends_at, updated_at
 """
+
+
+def remote_web_url() -> str:
+    return os.getenv("ARGUS_WEB_URL", "").rstrip("/")
+
+
+def using_remote_repository() -> bool:
+    return bool(remote_web_url())
+
+
+def remote_headers() -> dict[str, str]:
+    token = os.getenv("ARGUS_SENSOR_TOKEN", "")
+    headers = {"X-Argus-Sensor-Id": os.getenv("ARGUS_SENSOR_ID", socket.gethostname())}
+    if token:
+        headers["X-Argus-Sensor-Token"] = token
+    return headers
+
+
+def remote_request(
+    method: str,
+    path: str,
+    *,
+    json_payload: dict[str, object] | None = None,
+    params: dict[str, object] | None = None,
+) -> object:
+    url = f"{remote_web_url()}{path}"
+    with httpx.Client(timeout=30.0, headers=remote_headers()) as client:
+        response = client.request(method, url, json=json_payload, params=params)
+        response.raise_for_status()
+        if response.content:
+            return response.json()
+        return {}
 
 
 def _row_to_event(row: sqlite3.Row) -> Event:
@@ -33,6 +70,10 @@ def _row_to_source(row: sqlite3.Row) -> Source:
 
 def _row_to_raw_observation(row: sqlite3.Row) -> RawObservation:
     return RawObservation.model_validate(dict(row))
+
+
+def _row_to_sensor_status(row: sqlite3.Row) -> SensorStatus:
+    return SensorStatus.model_validate(dict(row))
 
 
 def list_events() -> list[Event]:
@@ -128,6 +169,15 @@ def create_event(payload: EventCreate) -> Event:
 
 
 def upsert_event(payload: EventCreate) -> tuple[Event, bool]:
+    if using_remote_repository():
+        response = remote_request(
+            "POST",
+            "/api/sensor/events",
+            json_payload=payload.model_dump(mode="json"),
+        )
+        data = dict(response)  # type: ignore[arg-type]
+        return Event.model_validate(data["event"]), bool(data["created"])
+
     now = datetime.now(timezone.utc).isoformat()
     data = payload.model_dump(mode="json")
     with connect() as connection:
@@ -468,6 +518,102 @@ def list_recent_observations(
     return [_row_to_raw_observation(row) for row in rows]
 
 
+def list_sensor_statuses() -> list[SensorStatus]:
+    with connect() as connection:
+        ensure_sensor_heartbeats_table(connection)
+        rows = connection.execute(
+            """
+            SELECT sensor_id, label, last_seen, last_source_id, total_posts,
+                   total_observations, total_articles, total_events,
+                   total_status_updates, total_scheduler_updates
+            FROM sensor_heartbeats
+            ORDER BY last_seen DESC, sensor_id
+            """
+        ).fetchall()
+    return [_row_to_sensor_status(row) for row in rows]
+
+
+def record_sensor_acquisition(
+    *,
+    sensor_id: str,
+    acquisition_type: str,
+    source_id: str | None = None,
+    count: int = 1,
+) -> None:
+    safe_sensor_id = normalize_sensor_id(sensor_id)
+    if not safe_sensor_id:
+        return
+    count = max(0, count)
+    now = datetime.now(timezone.utc).isoformat()
+    column = {
+        "observation": "total_observations",
+        "article": "total_articles",
+        "event": "total_events",
+        "source_status": "total_status_updates",
+        "scheduler_status": "total_scheduler_updates",
+    }.get(acquisition_type)
+    with connect() as connection:
+        ensure_sensor_heartbeats_table(connection)
+        connection.execute(
+            """
+            INSERT INTO sensor_heartbeats (
+                sensor_id, label, last_seen, last_source_id, total_posts,
+                total_observations, total_articles, total_events,
+                total_status_updates, total_scheduler_updates
+            )
+            VALUES (?, ?, ?, ?, 0, 0, 0, 0, 0, 0)
+            ON CONFLICT(sensor_id) DO UPDATE SET
+                last_seen = excluded.last_seen,
+                last_source_id = excluded.last_source_id
+            """,
+            (safe_sensor_id, safe_sensor_id, now, source_id),
+        )
+        connection.execute(
+            """
+            UPDATE sensor_heartbeats
+            SET total_posts = total_posts + ?,
+                total_observations = total_observations + ?,
+                total_articles = total_articles + ?,
+                total_events = total_events + ?,
+                total_status_updates = total_status_updates + ?,
+                total_scheduler_updates = total_scheduler_updates + ?
+            WHERE sensor_id = ?
+            """,
+            (
+                count if count else 1,
+                count if column == "total_observations" else 0,
+                count if column == "total_articles" else 0,
+                count if column == "total_events" else 0,
+                1 if column == "total_status_updates" else 0,
+                1 if column == "total_scheduler_updates" else 0,
+                safe_sensor_id,
+            ),
+        )
+
+
+def ensure_sensor_heartbeats_table(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sensor_heartbeats (
+            sensor_id TEXT PRIMARY KEY,
+            label TEXT NOT NULL,
+            last_seen TEXT NOT NULL,
+            last_source_id TEXT,
+            total_posts INTEGER NOT NULL DEFAULT 0,
+            total_observations INTEGER NOT NULL DEFAULT 0,
+            total_articles INTEGER NOT NULL DEFAULT 0,
+            total_events INTEGER NOT NULL DEFAULT 0,
+            total_status_updates INTEGER NOT NULL DEFAULT 0,
+            total_scheduler_updates INTEGER NOT NULL DEFAULT 0
+        )
+        """
+    )
+
+
+def normalize_sensor_id(sensor_id: str) -> str:
+    return " ".join(str(sensor_id or "").strip().split())[:120]
+
+
 def update_source_status(
     source_id: str,
     status: str,
@@ -475,6 +621,19 @@ def update_source_status(
     last_error: str | None = None,
     success: bool = False,
 ) -> None:
+    if using_remote_repository():
+        remote_request(
+            "POST",
+            "/api/sensor/source-status",
+            json_payload={
+                "source_id": source_id,
+                "status": status,
+                "last_error": last_error,
+                "success": success,
+            },
+        )
+        return
+
     now = datetime.now(timezone.utc).isoformat()
     with connect() as connection:
         connection.execute(
@@ -503,6 +662,24 @@ def insert_raw_observation(
     value: float,
     payload: str,
 ) -> bool:
+    if using_remote_repository():
+        response = remote_request(
+            "POST",
+            "/api/sensor/raw-observations",
+            json_payload={
+                "observation_id": observation_id,
+                "source_id": source_id,
+                "observed_at": observed_at,
+                "parameter_id": parameter_id,
+                "station_id": station_id,
+                "latitude": latitude,
+                "longitude": longitude,
+                "value": value,
+                "payload": payload,
+            },
+        )
+        return bool(dict(response).get("inserted"))  # type: ignore[arg-type]
+
     now = datetime.now(timezone.utc).isoformat()
     with connect() as connection:
         cursor = connection.execute(
@@ -548,6 +725,22 @@ def insert_raw_article(
     summary: str,
     payload: str,
 ) -> bool:
+    if using_remote_repository():
+        response = remote_request(
+            "POST",
+            "/api/sensor/raw-articles",
+            json_payload={
+                "article_id": article_id,
+                "source_id": source_id,
+                "title": title,
+                "url": url,
+                "published_at": published_at,
+                "summary": summary,
+                "payload": payload,
+            },
+        )
+        return bool(dict(response).get("inserted"))  # type: ignore[arg-type]
+
     now = datetime.now(timezone.utc).isoformat()
     with connect() as connection:
         cursor = connection.execute(
@@ -578,6 +771,14 @@ def insert_raw_article(
 
 
 def delete_events_by_source(source: str) -> int:
+    if using_remote_repository():
+        response = remote_request(
+            "POST",
+            "/api/sensor/events/delete-by-source",
+            json_payload={"source": source},
+        )
+        return int(dict(response).get("deleted", 0))  # type: ignore[arg-type]
+
     with connect() as connection:
         cursor = connection.execute("DELETE FROM events WHERE source = ?", (source,))
     return cursor.rowcount
@@ -615,6 +816,15 @@ def find_location_alias(
 
 
 def get_location_alias(kind: str, name: str) -> tuple[float, float] | None:
+    if using_remote_repository():
+        response = remote_request(
+            "GET",
+            "/api/sensor/location-alias",
+            params={"kind": kind, "name": name},
+        )
+        location = dict(response).get("location")  # type: ignore[arg-type]
+        return tuple(location) if location else None  # type: ignore[return-value]
+
     normalized_name = normalize_location_name(name)
     with connect() as connection:
         row = connection.execute(
@@ -633,6 +843,11 @@ def get_location_alias(kind: str, name: str) -> tuple[float, float] | None:
 
 
 def get_fallback_location() -> tuple[float, float] | None:
+    if using_remote_repository():
+        response = remote_request("GET", "/api/sensor/fallback-location")
+        location = dict(response).get("location")  # type: ignore[arg-type]
+        return tuple(location) if location else None  # type: ignore[return-value]
+
     with connect() as connection:
         row = connection.execute(
             """
@@ -662,6 +877,20 @@ def upsert_location_alias(
     longitude: float,
     source: str = "learned",
 ) -> None:
+    if using_remote_repository():
+        remote_request(
+            "POST",
+            "/api/sensor/location-aliases",
+            json_payload={
+                "kind": kind,
+                "name": name,
+                "latitude": latitude,
+                "longitude": longitude,
+                "source": source,
+            },
+        )
+        return
+
     with connect() as connection:
         upsert_location_alias_in_connection(
             connection,
@@ -717,6 +946,14 @@ def upsert_location_alias_in_connection(
 def list_location_aliases(*, kinds: Sequence[str]) -> list[sqlite3.Row]:
     if not kinds:
         return []
+    if using_remote_repository():
+        response = remote_request(
+            "GET",
+            "/api/sensor/location-aliases",
+            params={"kinds": list(kinds)},
+        )
+        return list(response)  # type: ignore[arg-type,return-value]
+
     placeholders = ",".join("?" for _ in kinds)
     with connect() as connection:
         rows = connection.execute(
@@ -739,6 +976,20 @@ def record_location_candidate(
     normalized_name: str,
     context: str,
 ) -> None:
+    if using_remote_repository():
+        remote_request(
+            "POST",
+            "/api/sensor/location-candidates",
+            json_payload={
+                "source_id": source_id,
+                "kind": kind,
+                "name": name,
+                "normalized_name": normalized_name,
+                "context": context,
+            },
+        )
+        return
+
     if not normalized_name:
         return
     now = datetime.now(timezone.utc).isoformat()
@@ -818,6 +1069,13 @@ def list_classification_terms(
     *,
     rule_group: str | None = None,
 ) -> list[sqlite3.Row]:
+    if using_remote_repository():
+        params: dict[str, object] = {"source_id": source_id}
+        if rule_group is not None:
+            params["rule_group"] = rule_group
+        response = remote_request("GET", "/api/sensor/classification-terms", params=params)
+        return list(response)  # type: ignore[arg-type,return-value]
+
     clauses = ["source_id = ?"]
     params: list[object] = [source_id]
     if rule_group is not None:
@@ -842,3 +1100,181 @@ def list_classification_terms(
         init_db()
         return list_classification_terms(source_id, rule_group=rule_group)
     return rows
+
+
+def scheduler_job_paused(job_id: str) -> bool:
+    if using_remote_repository():
+        response = remote_request("GET", f"/api/sensor/scheduler/jobs/{job_id}/control")
+        return bool(dict(response).get("paused"))  # type: ignore[arg-type]
+
+    try:
+        with connect() as connection:
+            ensure_scheduler_controls_table(connection)
+            row = connection.execute(
+                "SELECT paused FROM scheduler_controls WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()
+    except sqlite3.OperationalError as error:
+        if "no such table" not in str(error):
+            raise
+        return False
+    return bool(row["paused"]) if row else False
+
+
+def set_scheduler_job_paused(job_id: str, paused: bool) -> None:
+    if using_remote_repository():
+        remote_request(
+            "POST",
+            f"/api/sensor/scheduler/jobs/{job_id}/control",
+            json_payload={"paused": paused},
+        )
+        return
+
+    with connect() as connection:
+        ensure_scheduler_controls_table(connection)
+        connection.execute(
+            """
+            INSERT INTO scheduler_controls (job_id, paused, updated_at)
+            VALUES (?, ?, datetime('now'))
+            ON CONFLICT(job_id) DO UPDATE SET
+                paused = excluded.paused,
+                updated_at = excluded.updated_at
+            """,
+            (job_id, 1 if paused else 0),
+        )
+
+
+def ensure_scheduler_controls_table(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS scheduler_controls (
+            job_id TEXT PRIMARY KEY,
+            paused INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+
+
+def get_scheduler_job_status(job_id: str) -> dict[str, object] | None:
+    if using_remote_repository():
+        response = remote_request("GET", f"/api/sensor/scheduler/jobs/{job_id}/status")
+        data = dict(response)  # type: ignore[arg-type]
+        return data if data else None
+
+    try:
+        with connect() as connection:
+            ensure_scheduler_status_table(connection)
+            row = connection.execute(
+                """
+                SELECT running, runs, failures, last_started, last_finished,
+                       next_run_at, last_result, last_error
+                FROM scheduler_status
+                WHERE job_id = ?
+                """,
+                (job_id,),
+            ).fetchone()
+    except sqlite3.OperationalError as error:
+        if "no such table" not in str(error):
+            raise
+        return None
+    if row is None:
+        return None
+    return {
+        "running": bool(row["running"]),
+        "runs": int(row["runs"]),
+        "failures": int(row["failures"]),
+        "last_started": parse_stored_datetime(row["last_started"]),
+        "last_finished": parse_stored_datetime(row["last_finished"]),
+        "next_run_at": parse_stored_datetime(row["next_run_at"]),
+        "last_result": row["last_result"],
+        "last_error": row["last_error"],
+    }
+
+
+def set_scheduler_job_status(
+    *,
+    job_id: str,
+    running: bool,
+    runs: int,
+    failures: int,
+    last_started: datetime | None,
+    last_finished: datetime | None,
+    next_run_at: datetime | None,
+    last_result: str | None,
+    last_error: str | None,
+) -> None:
+    if using_remote_repository():
+        remote_request(
+            "POST",
+            f"/api/sensor/scheduler/jobs/{job_id}/status",
+            json_payload={
+                "running": running,
+                "runs": runs,
+                "failures": failures,
+                "last_started": last_started.isoformat() if last_started else None,
+                "last_finished": last_finished.isoformat() if last_finished else None,
+                "next_run_at": next_run_at.isoformat() if next_run_at else None,
+                "last_result": last_result,
+                "last_error": last_error,
+            },
+        )
+        return
+
+    with connect() as connection:
+        ensure_scheduler_status_table(connection)
+        connection.execute(
+            """
+            INSERT INTO scheduler_status (
+                job_id, running, runs, failures, last_started, last_finished,
+                next_run_at, last_result, last_error, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(job_id) DO UPDATE SET
+                running = excluded.running,
+                runs = excluded.runs,
+                failures = excluded.failures,
+                last_started = excluded.last_started,
+                last_finished = excluded.last_finished,
+                next_run_at = excluded.next_run_at,
+                last_result = excluded.last_result,
+                last_error = excluded.last_error,
+                updated_at = excluded.updated_at
+            """,
+            (
+                job_id,
+                1 if running else 0,
+                runs,
+                failures,
+                last_started.isoformat() if last_started else None,
+                last_finished.isoformat() if last_finished else None,
+                next_run_at.isoformat() if next_run_at else None,
+                last_result,
+                last_error,
+            ),
+        )
+
+
+def ensure_scheduler_status_table(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS scheduler_status (
+            job_id TEXT PRIMARY KEY,
+            running INTEGER NOT NULL DEFAULT 0,
+            runs INTEGER NOT NULL DEFAULT 0,
+            failures INTEGER NOT NULL DEFAULT 0,
+            last_started TEXT,
+            last_finished TEXT,
+            next_run_at TEXT,
+            last_result TEXT,
+            last_error TEXT,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+
+
+def parse_stored_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    return datetime.fromisoformat(value)

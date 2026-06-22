@@ -16,7 +16,7 @@
       integrity="sha256-YU3qCpj/P06tdPBJGPax0bm6Q1wltfwjsho5TR4+TYc="
       crossorigin=""
     />
-    <link rel="stylesheet" href="static/styles.css?v=20260621-poll-controls" />
+    <link rel="stylesheet" href="static/styles.css?v=20260622-sensors" />
   </head>
   <body>
     <main class="shell">
@@ -40,7 +40,7 @@
             <h2>Operations</h2>
           </div>
           <button type="button" class="menu-item active" data-view="events">Map</button>
-          <button type="button" class="menu-item">Sensors</button>
+          <button type="button" class="menu-item" data-view="sensors">Sensors</button>
           <button type="button" class="menu-item">Alerts</button>
           <button type="button" class="menu-item" data-view="sources">Sources</button>
           <button type="button" class="menu-item" data-view="ml">ML</button>
@@ -242,6 +242,19 @@
           <pre class="proxy-snippet" id="proxy-snippet"></pre>
         </div>
 
+        <div class="panel-view" id="sensors-view" hidden>
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Acquisition</p>
+              <h2>Sensors</h2>
+            </div>
+            <button type="button" class="save-button" id="refresh-sensors">Refresh</button>
+          </div>
+          <div class="settings-note" id="sensor-note"></div>
+          <div class="source-summary" id="sensor-summary"></div>
+          <div class="source-list" id="sensor-list"></div>
+        </div>
+
         <div class="panel-view" id="sources-view" hidden>
           <div class="panel-header">
             <div>
@@ -362,6 +375,6 @@
       integrity="sha256-Hk4dIpcqOSb0hZjgyvFOP+cEmDXUKKNE/tT542ZbNQg="
       crossorigin=""
     ></script>
-    <script type="module" src="static/app.js?v=20260621-poll-controls"></script>
+    <script type="module" src="static/app.js?v=20260622-sensors"></script>
   </body>
 </html>

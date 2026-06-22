@@ -2,6 +2,13 @@
 
 Argus is a Denmark-focused hazardous event monitor. It provides a FastAPI backend,
 a local SQLite database, and a web frontend centered on a satellite map of Denmark.
+The Docker deployment is split into two runtime roles:
+
+- `argus-web` serves the web UI and API.
+- `argus-sensor` polls external data sources and pushes readings/events to `argus-web`.
+
+`argus-web` owns the database. Sensors can run on the same machine, in Docker,
+or on another host as long as they can reach the web API.
 
 ## Run Locally
 
@@ -14,6 +21,12 @@ uvicorn argus.main:app --reload
 
 Open http://localhost:8000.
 
+Run the sensor in a second terminal when you want local polling:
+
+```bash
+ARGUS_WEB_URL=http://127.0.0.1:8000 python -m argus.sensor
+```
+
 ## Run With Docker
 
 ```bash
@@ -22,9 +35,11 @@ docker compose up --build
 
 Open http://localhost:8088.
 
-The SQLite database is stored in the `argus-data` Docker volume. Set
-`ARGUS_DB_PATH` to choose a different local path. The container publishes on
-`0.0.0.0:8088` by default so other devices can reach
+Docker starts both `argus-web` and `argus-sensor`. The SQLite database is stored
+with `argus-web` in the `argus-data` Docker volume. `argus-sensor` pushes data
+to `argus-web` over HTTP. Set `ARGUS_DB_PATH` on `argus-web` to choose a
+different local path. The web service publishes on `0.0.0.0:8088` by default so
+other devices can reach
 `http://<host-ip>:8088`. Set `ARGUS_BIND_ADDRESS=127.0.0.1` if you only want
 local reverse proxy access.
 
@@ -57,6 +72,9 @@ ARGUS_NTFY_SERVER_URL=https://ntfy.sh
 ARGUS_NTFY_TOPIC=argus-alerts
 ARGUS_NTFY_TOKEN=optional-token
 ARGUS_NTFY_PRIORITY=high
+ARGUS_WEB_EMBEDDED_SENSOR=false
+ARGUS_WEB_URL=http://argus-web:8000
+ARGUS_SENSOR_TOKEN=optional-shared-secret
 ARGUS_SCHEDULER_ENABLED=true
 ARGUS_SCHEDULER_STARTUP_DELAY_SECONDS=15
 ARGUS_SCHEDULER_STAGGER_SECONDS=30
@@ -72,10 +90,12 @@ ARGUS_TRAFFIC_INTERVAL_SECONDS=600
 ARGUS_HEALTH_ALERTS_INTERVAL_SECONDS=1800
 ```
 
-The Docker image starts Uvicorn through `python -m argus.server`, which reads
-these environment variables. When using a path prefix, configure the proxy to
-forward requests to the app and preserve or strip the prefix consistently with
-`ARGUS_ROOT_PATH`.
+The `argus-web` container starts Uvicorn through `python -m argus.server`, while
+`argus-sensor` starts `python -m argus.sensor`. `argus-sensor` uses
+`ARGUS_WEB_URL` to push data to the web API. Set the same `ARGUS_SENSOR_TOKEN`
+on both processes if you want to require authenticated sensor writes. When using
+a path prefix, configure the proxy to forward requests to the web app and
+preserve or strip the prefix consistently with `ARGUS_ROOT_PATH`.
 
 The in-app Settings page stores these values in SQLite for operators, but
 changes to runtime proxy behavior require restarting the container.
@@ -103,6 +123,8 @@ these values once notification dispatch is added.
 - `POST /api/sources/health-alerts/sync`
 - `GET /api/scheduler/jobs`
 - `POST /api/scheduler/jobs/{job_id}/run`
+- `POST /api/scheduler/jobs/{job_id}/pause`
+- `POST /api/scheduler/jobs/{job_id}/resume`
 
 ## DMI Ingestion
 
@@ -123,10 +145,12 @@ Trigger a manual sync from the Sources page or with:
 curl -X POST http://localhost:8000/api/scheduler/jobs/dmi-metobs/run
 ```
 
-The generic polling scheduler starts with the app when
+The generic polling scheduler runs in `argus-sensor` when
 `ARGUS_SCHEDULER_ENABLED=true`. Weather, news, electricity, maritime, Niord,
 ODIN, police/Ritzau, and traffic integrations default to 10-minute polling.
-Danish Health Alerts still default to 30 minutes.
+Danish Health Alerts still default to 30 minutes. Pause/resume controls are
+stored in `argus-web` and read by `argus-sensor` over HTTP, so the web frontend
+can control sensors running on other machines.
 
 ## Other Ingestion Sources
 

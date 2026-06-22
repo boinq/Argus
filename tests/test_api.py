@@ -27,6 +27,7 @@ from argus.main import (
     api_get_settings,
     api_list_events,
     api_list_observations,
+    api_list_sensors,
     api_list_sources,
     api_ml_candidates,
     api_ml_overview,
@@ -37,6 +38,9 @@ from argus.main import (
     api_reset_database,
     api_resume_scheduler_job,
     api_scheduler_jobs,
+    api_sensor_event,
+    api_sensor_raw_observation,
+    api_sensor_source_status,
     api_sync_electricity,
     api_sync_electricity_incidents,
     api_sync_health_alerts,
@@ -50,7 +54,14 @@ from argus.main import (
     api_update_settings,
     health,
 )
-from argus.models import AppSettingsUpdate, EventCreate, MLScoreRequest, PromoteTermRequest
+from argus.models import (
+    AppSettingsUpdate,
+    EventCreate,
+    MLScoreRequest,
+    PromoteTermRequest,
+    SensorRawObservation,
+    SensorSourceStatusUpdate,
+)
 from argus.repository import (
     get_location_alias,
     insert_raw_article,
@@ -442,7 +453,69 @@ def test_observations_can_be_filtered_by_station(tmp_path, monkeypatch):
     assert [item.value for item in station_observations] == [13.0, 12.0]
 
 
-def test_scheduler_jobs_are_returned():
+def test_sensor_api_writes_to_web_owned_database(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
+    init_db()
+
+    api_sensor_source_status(
+        SensorSourceStatusUpdate(
+            source_id="dmi-metobs",
+            status="connected",
+            success=True,
+        ),
+        sensor_id="test-sensor",
+    )
+    observation_result = api_sensor_raw_observation(
+        SensorRawObservation(
+            observation_id="remote-sensor:06123:temp:1",
+            source_id="dmi-metobs",
+            observed_at="2026-06-22T09:00:00+00:00",
+            parameter_id="temp_dry",
+            station_id="06123",
+            latitude=55.4,
+            longitude=10.4,
+            value=18.5,
+            payload="{}",
+        ),
+        sensor_id="test-sensor",
+    )
+    event_result = api_sensor_event(
+        EventCreate(
+            title="Remote sensor test event",
+            category="weather",
+            severity="medium",
+            status="current",
+            source="Remote sensor",
+            description="Remote sensor pushed this event to argus-web.",
+            latitude=55.4,
+            longitude=10.4,
+            starts_at="2026-06-22T09:00:00+00:00",
+            ends_at=None,
+        ),
+        sensor_id="test-sensor",
+    )
+
+    observations = api_list_observations(source_id="dmi-metobs", station_id="06123")
+    events = api_list_events()
+    source = next(item for item in api_list_sources() if item.id == "dmi-metobs")
+    sensor = api_list_sensors()[0]
+
+    assert observation_result == {"inserted": True}
+    assert event_result["created"] is True
+    assert len(observations) == 1
+    assert observations[0].value == 18.5
+    assert events[0].title == "Remote sensor test event"
+    assert source.last_success is not None
+    assert sensor.sensor_id == "test-sensor"
+    assert sensor.total_posts == 3
+    assert sensor.total_status_updates == 1
+    assert sensor.total_observations == 1
+    assert sensor.total_events == 1
+
+
+def test_scheduler_jobs_are_returned(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
+    init_db()
     jobs = api_scheduler_jobs()
     job_intervals = {job.id: job.interval_seconds for job in jobs}
 
@@ -459,7 +532,9 @@ def test_scheduler_jobs_are_returned():
     assert all(job.paused is False for job in jobs)
 
 
-def test_scheduler_job_can_be_paused_and_resumed():
+def test_scheduler_job_can_be_paused_and_resumed(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
+    init_db()
     paused = api_pause_scheduler_job("dmi-metobs")
 
     assert paused.id == "dmi-metobs"
@@ -473,9 +548,11 @@ def test_scheduler_job_can_be_paused_and_resumed():
     assert resumed.paused is False
 
 
-def test_scheduler_staggers_initial_next_runs(monkeypatch):
+def test_scheduler_staggers_initial_next_runs(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
     monkeypatch.setenv("ARGUS_SCHEDULER_STARTUP_DELAY_SECONDS", "60")
     monkeypatch.setenv("ARGUS_SCHEDULER_STAGGER_SECONDS", "7")
+    init_db()
 
     def handler() -> IngestResult:
         return IngestResult(

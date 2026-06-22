@@ -165,6 +165,47 @@ def init_db() -> None:
         )
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS scheduler_controls (
+                job_id TEXT PRIMARY KEY,
+                paused INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS scheduler_status (
+                job_id TEXT PRIMARY KEY,
+                running INTEGER NOT NULL DEFAULT 0,
+                runs INTEGER NOT NULL DEFAULT 0,
+                failures INTEGER NOT NULL DEFAULT 0,
+                last_started TEXT,
+                last_finished TEXT,
+                next_run_at TEXT,
+                last_result TEXT,
+                last_error TEXT,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sensor_heartbeats (
+                sensor_id TEXT PRIMARY KEY,
+                label TEXT NOT NULL,
+                last_seen TEXT NOT NULL,
+                last_source_id TEXT,
+                total_posts INTEGER NOT NULL DEFAULT 0,
+                total_observations INTEGER NOT NULL DEFAULT 0,
+                total_articles INTEGER NOT NULL DEFAULT 0,
+                total_events INTEGER NOT NULL DEFAULT 0,
+                total_status_updates INTEGER NOT NULL DEFAULT 0,
+                total_scheduler_updates INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+        connection.execute(
+            """
             CREATE UNIQUE INDEX IF NOT EXISTS idx_events_source_title
             ON events (source, title)
             """

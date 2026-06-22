@@ -9,6 +9,7 @@ import {
   renderMlTerms,
 } from "./js/ml-panel.js";
 import { renderReports as renderReportsPanel, reportEvents as filterReportEvents } from "./js/reports-panel.js";
+import { renderSensors as renderSensorsPanel } from "./js/sensors-panel.js?v=20260622-sensors";
 import {
   fillSettings,
   renderProxySnippet,
@@ -44,6 +45,7 @@ const sideMenu = document.querySelector("#side-menu");
 const menuScrim = document.querySelector("#menu-scrim");
 const menuItems = document.querySelectorAll(".menu-item[data-view]");
 const eventsView = document.querySelector("#events-view");
+const sensorsView = document.querySelector("#sensors-view");
 const sourcesView = document.querySelector("#sources-view");
 const reportsView = document.querySelector("#reports-view");
 const mlView = document.querySelector("#ml-view");
@@ -67,6 +69,10 @@ const reportSummary = document.querySelector("#report-summary");
 const reportBrief = document.querySelector("#report-brief");
 const reportList = document.querySelector("#report-list");
 const refreshReport = document.querySelector("#refresh-report");
+const refreshSensors = document.querySelector("#refresh-sensors");
+const sensorNote = document.querySelector("#sensor-note");
+const sensorSummary = document.querySelector("#sensor-summary");
+const sensorList = document.querySelector("#sensor-list");
 const sourceFilter = document.querySelector("#source-filter");
 const sourceSummary = document.querySelector("#source-summary");
 const sourceList = document.querySelector("#source-list");
@@ -99,6 +105,7 @@ const timelineWindowButtons = document.querySelectorAll("[data-timeline-window]"
 const eventDetailDrawer = document.querySelector("#event-detail-drawer");
 const eventDetailBody = document.querySelector("#event-detail-body");
 let sources = [];
+let sensors = [];
 let schedulerJobs = [];
 let observations = [];
 let observationStations = [];
@@ -147,6 +154,11 @@ const sourceElements = {
 const sourceSyncElements = {
   target: sourceSyncTarget,
   button: syncSource,
+};
+
+const sensorElements = {
+  summary: sensorSummary,
+  list: sensorList,
 };
 
 function filteredEvents() {
@@ -698,6 +710,24 @@ async function loadSources() {
   }
 }
 
+async function loadSensors() {
+  try {
+    const response = await fetch("api/sensors");
+    if (!response.ok) {
+      throw new Error(`Sensors API responded with ${response.status}`);
+    }
+    sensors = await response.json();
+    sensorNote.textContent = sensors.length
+      ? `${sensors.length} sensor${sensors.length === 1 ? "" : "s"} have posted acquisitions.`
+      : "No sensors have posted acquisitions yet.";
+    sensorNote.classList.remove("error");
+    renderSensors();
+  } catch (error) {
+    sensorNote.textContent = error.message;
+    sensorNote.classList.add("error");
+  }
+}
+
 async function refreshSchedulerJobs() {
   if (activeView !== "sources") {
     return;
@@ -1004,6 +1034,7 @@ async function resetDatabaseFromSettings() {
     observations = [];
     observationStations = [];
     sources = [];
+    sensors = [];
     schedulerJobs = [];
     knownLayerCategories.clear();
     knownLayerSources.clear();
@@ -1040,6 +1071,10 @@ function renderSources() {
   updateSourceCountdowns(sourceList);
 }
 
+function renderSensors() {
+  renderSensorsPanel(sensors, sensorElements);
+}
+
 function renderSourceSyncTargets() {
   renderSyncTargets(schedulerJobs, sourceSyncElements);
 }
@@ -1047,6 +1082,7 @@ function renderSourceSyncTargets() {
 function setView(viewName) {
   activeView = viewName;
   eventsView.hidden = viewName !== "events";
+  sensorsView.hidden = viewName !== "sensors";
   sourcesView.hidden = viewName !== "sources";
   reportsView.hidden = viewName !== "reports";
   mlView.hidden = viewName !== "ml";
@@ -1061,6 +1097,9 @@ function setView(viewName) {
   if (viewName === "sources") {
     loadSources();
   }
+  if (viewName === "sensors") {
+    loadSensors();
+  }
   if (viewName === "ml") {
     loadMl();
   }
@@ -1069,6 +1108,9 @@ function setView(viewName) {
     renderMap(mapLayerEvents(currentMapBaseEvents()));
   } else if (viewName === "sources") {
     renderSources();
+    renderMap(mapLayerEvents(currentMapBaseEvents()));
+  } else if (viewName === "sensors") {
+    renderSensors();
     renderMap(mapLayerEvents(currentMapBaseEvents()));
   } else if (viewName === "ml") {
     renderMap(mapLayerEvents(currentMapBaseEvents()));
@@ -1083,7 +1125,12 @@ function startSourceTimers() {
       updateSourceCountdowns(sourceList);
     }
   }, 1000);
-  sourceRefreshTimer = window.setInterval(refreshSchedulerJobs, 30000);
+  sourceRefreshTimer = window.setInterval(() => {
+    refreshSchedulerJobs();
+    if (activeView === "sensors") {
+      loadSensors();
+    }
+  }, 30000);
 }
 
 categoryFilter.addEventListener("change", render);
@@ -1148,6 +1195,7 @@ reportCategory.addEventListener("change", () => {
   renderMap(mapLayerEvents(currentMapBaseEvents()));
 });
 refreshReport.addEventListener("click", loadEvents);
+refreshSensors.addEventListener("click", loadSensors);
 timelineRange.addEventListener("input", () => {
   timelineValue = Number(timelineRange.value);
   timelineWindowStart = null;

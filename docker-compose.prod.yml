@@ -1,8 +1,14 @@
 services:
-  argus:
+  argus-web:
     env_file:
       - path: .env
         required: false
     volumes:
       - ./data:/data
+    restart: unless-stopped
+
+  argus-sensor:
+    env_file:
+      - path: .env
+        required: false
     restart: unless-stopped

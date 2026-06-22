@@ -19,6 +19,7 @@ ARGUS_TRUSTED_HOSTS=*
 ARGUS_BIND_ADDRESS=0.0.0.0
 ARGUS_BIND_PORT=8088
 ARGUS_FORWARDED_ALLOW_IPS=*
+ARGUS_SENSOR_TOKEN=choose-a-shared-secret
 ARGUS_POLICE_RSS_INTERVAL_SECONDS=600
 ```
 
@@ -48,7 +49,17 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
 curl http://127.0.0.1:8088/api/health
 ```
 
-The SQLite database is stored at `./data/argus.db` on the host.
+The deployment runs two services: `argus-web` for the UI/API/database and
+`argus-sensor` for source polling. `argus-sensor` pushes data to `argus-web`
+over HTTP. The SQLite database lives with `argus-web` at `./data/argus.db`.
+
+To run a sensor on another machine, install the project there and start:
+
+```bash
+ARGUS_WEB_URL=https://argus.example.dk \
+ARGUS_SENSOR_TOKEN=choose-a-shared-secret \
+python -m argus.sensor
+```
 
 ## 3. Put A Reverse Proxy In Front
 
@@ -74,12 +85,12 @@ single run.
 
 ## 5. Backup And Restore
 
-Stop writes briefly and copy the SQLite file:
+Stop writes briefly and copy the SQLite file from the web host:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml stop argus
+docker compose -f docker-compose.yml -f docker-compose.prod.yml stop argus-sensor
 cp data/argus.db "argus-$(date +%Y%m%d-%H%M%S).db"
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d argus-sensor
 ```
 
 Restore by stopping Argus, replacing `data/argus.db`, and starting it again.
@@ -87,9 +98,10 @@ Restore by stopping Argus, replacing `data/argus.db`, and starting it again.
 ## 6. Useful Commands
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f argus
-docker compose -f docker-compose.yml -f docker-compose.prod.yml restart argus
-docker compose -f docker-compose.yml -f docker-compose.prod.yml exec argus python -m compileall argus
+docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f argus-web argus-sensor
+docker compose -f docker-compose.yml -f docker-compose.prod.yml restart argus-web
+docker compose -f docker-compose.yml -f docker-compose.prod.yml restart argus-sensor
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec argus-web python -m compileall argus
 ```
 
 Manual source syncs can be run from the web UI or with:

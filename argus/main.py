@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import AsyncIterator
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -32,6 +32,14 @@ from argus.models import (
     PromoteTermRequest,
     RawObservation,
     SchedulerJobStatus,
+    SensorDeleteEvents,
+    SensorLocationAlias,
+    SensorLocationCandidate,
+    SensorRawArticle,
+    SensorRawObservation,
+    SensorSchedulerStatus,
+    SensorStatus,
+    SensorSourceStatusUpdate,
     Source,
 )
 from argus.ml import classify_category, classify_severity
@@ -40,122 +48,49 @@ from argus.repository import (
     delete_learned_classification_terms,
     get_event,
     get_settings,
+    get_fallback_location,
+    get_location_alias,
+    get_scheduler_job_status,
     list_active_classification_terms,
     list_classification_term_candidates,
+    list_classification_terms,
+    list_location_aliases,
     list_recent_observations,
+    list_sensor_statuses,
     list_sources,
     list_events,
     ml_overview,
     promote_classification_candidate,
+    record_sensor_acquisition,
+    record_location_candidate,
     reset_database,
+    delete_events_by_source,
+    insert_raw_article,
+    insert_raw_observation,
+    scheduler_job_paused,
+    set_scheduler_job_paused,
+    set_scheduler_job_status,
     update_event,
     update_settings,
+    update_source_status,
+    upsert_event,
+    upsert_location_alias,
 )
-from argus.scheduler import PollJob, PollScheduler, env_bool, env_int
+from argus.scheduler import env_bool
+from argus.scheduler_registry import create_scheduler
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = BASE_DIR / "static"
 
-scheduler = PollScheduler(
-    enabled=env_bool("ARGUS_SCHEDULER_ENABLED", True),
-)
-scheduler.register(
-    PollJob(
-        id="dmi-metobs",
-        source_id="dmi-metobs",
-        name="DMI meteorological observations",
-        interval_seconds=max(60, env_int("ARGUS_DMI_METOBS_INTERVAL_SECONDS", 600)),
-        handler=sync_dmi_observations,
-    )
-)
-scheduler.register(
-    PollJob(
-        id="dr-news",
-        source_id="dr-news",
-        name="DR news",
-        interval_seconds=max(60, env_int("ARGUS_DR_NEWS_INTERVAL_SECONDS", 600)),
-        handler=sync_news,
-    )
-)
-scheduler.register(
-    PollJob(
-        id="energidataservice-elspot",
-        source_id="energidataservice-elspot",
-        name="Energi Data Service electricity telemetry",
-        interval_seconds=max(60, env_int("ARGUS_ELECTRICITY_INTERVAL_SECONDS", 600)),
-        handler=sync_electricity,
-    )
-)
-scheduler.register(
-    PollJob(
-        id="greenpowerdenmark-incidents",
-        source_id="greenpowerdenmark-incidents",
-        name="Green Power Denmark elnet incidents",
-        interval_seconds=max(60, env_int("ARGUS_ELECTRICITY_INCIDENTS_INTERVAL_SECONDS", 600)),
-        handler=sync_electricity_incidents,
-    )
-)
-scheduler.register(
-    PollJob(
-        id="dma-news",
-        source_id="dma-news",
-        name="Danish Maritime Authority news",
-        interval_seconds=max(60, env_int("ARGUS_MARITIME_INTERVAL_SECONDS", 600)),
-        handler=sync_maritime,
-    )
-)
-scheduler.register(
-    PollJob(
-        id="niord-messages",
-        source_id="niord-messages",
-        name="Niord nautical information",
-        interval_seconds=max(60, env_int("ARGUS_NIORD_INTERVAL_SECONDS", 600)),
-        handler=sync_niord,
-    )
-)
-scheduler.register(
-    PollJob(
-        id="odin-incidents",
-        source_id="odin-incidents",
-        name="ODIN 1-1-2 pulse",
-        interval_seconds=max(60, env_int("ARGUS_ODIN_INTERVAL_SECONDS", 600)),
-        handler=sync_odin,
-    )
-)
-scheduler.register(
-    PollJob(
-        id="police-ritzau-short-messages",
-        source_id="police-ritzau-short-messages",
-        name="Police/Ritzau short messages",
-        interval_seconds=max(60, env_int("ARGUS_POLICE_RSS_INTERVAL_SECONDS", 600)),
-        handler=sync_police_short_messages,
-    )
-)
-scheduler.register(
-    PollJob(
-        id="trafikinfo-events",
-        source_id="trafikinfo-events",
-        name="Vejdirektoratet traffic events",
-        interval_seconds=max(60, env_int("ARGUS_TRAFFIC_INTERVAL_SECONDS", 600)),
-        handler=sync_traffic,
-    )
-)
-scheduler.register(
-    PollJob(
-        id="health-alerts",
-        source_id="health-alerts",
-        name="Danish health alerts",
-        interval_seconds=max(300, env_int("ARGUS_HEALTH_ALERTS_INTERVAL_SECONDS", 1800)),
-        handler=sync_health_alerts,
-    )
-)
+scheduler = create_scheduler()
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     init_db()
-    scheduler.start()
+    if env_bool("ARGUS_WEB_EMBEDDED_SENSOR", False):
+        scheduler.start()
     try:
         yield
     finally:
@@ -194,6 +129,180 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+def verify_sensor_token(
+    x_argus_sensor_token: str | None = Header(default=None),
+    x_argus_sensor_id: str | None = Header(default=None),
+) -> str:
+    expected = os.getenv("ARGUS_SENSOR_TOKEN", "")
+    if expected and x_argus_sensor_token != expected:
+        raise HTTPException(status_code=401, detail="Invalid sensor token")
+    return x_argus_sensor_id or "unknown-sensor"
+
+
+@app.post("/api/sensor/source-status")
+def api_sensor_source_status(
+    payload: SensorSourceStatusUpdate,
+    sensor_id: str = Depends(verify_sensor_token),
+) -> dict[str, str]:
+    update_source_status(
+        payload.source_id,
+        payload.status,
+        last_error=payload.last_error,
+        success=payload.success,
+    )
+    record_sensor_acquisition(
+        sensor_id=sensor_id,
+        acquisition_type="source_status",
+        source_id=payload.source_id,
+    )
+    return {"status": "stored"}
+
+
+@app.post("/api/sensor/raw-observations")
+def api_sensor_raw_observation(
+    payload: SensorRawObservation,
+    sensor_id: str = Depends(verify_sensor_token),
+) -> dict[str, bool]:
+    inserted = insert_raw_observation(**payload.model_dump())
+    if inserted:
+        record_sensor_acquisition(
+            sensor_id=sensor_id,
+            acquisition_type="observation",
+            source_id=payload.source_id,
+        )
+    return {"inserted": inserted}
+
+
+@app.post("/api/sensor/raw-articles")
+def api_sensor_raw_article(
+    payload: SensorRawArticle,
+    sensor_id: str = Depends(verify_sensor_token),
+) -> dict[str, bool]:
+    inserted = insert_raw_article(**payload.model_dump())
+    if inserted:
+        record_sensor_acquisition(
+            sensor_id=sensor_id,
+            acquisition_type="article",
+            source_id=payload.source_id,
+        )
+    return {"inserted": inserted}
+
+
+@app.post("/api/sensor/events")
+def api_sensor_event(
+    payload: EventCreate,
+    sensor_id: str = Depends(verify_sensor_token),
+) -> dict[str, object]:
+    event, created = upsert_event(payload)
+    record_sensor_acquisition(
+        sensor_id=sensor_id,
+        acquisition_type="event",
+        source_id=payload.source,
+    )
+    return {"event": event.model_dump(mode="json"), "created": created}
+
+
+@app.post("/api/sensor/events/delete-by-source")
+def api_sensor_delete_events(
+    payload: SensorDeleteEvents,
+    _: None = Depends(verify_sensor_token),
+) -> dict[str, int]:
+    return {"deleted": delete_events_by_source(payload.source)}
+
+
+@app.get("/api/sensor/location-alias")
+def api_sensor_location_alias(
+    kind: str,
+    name: str,
+    _: None = Depends(verify_sensor_token),
+) -> dict[str, object]:
+    location = get_location_alias(kind, name)
+    return {"location": list(location) if location else None}
+
+
+@app.get("/api/sensor/fallback-location")
+def api_sensor_fallback_location(_: None = Depends(verify_sensor_token)) -> dict[str, object]:
+    location = get_fallback_location()
+    return {"location": list(location) if location else None}
+
+
+@app.get("/api/sensor/location-aliases")
+def api_sensor_location_aliases(
+    kinds: list[str] = Query(default=[]),
+    _: None = Depends(verify_sensor_token),
+) -> list[dict[str, object]]:
+    return [dict(row) for row in list_location_aliases(kinds=kinds)]
+
+
+@app.post("/api/sensor/location-aliases")
+def api_sensor_upsert_location_alias(
+    payload: SensorLocationAlias,
+    _: None = Depends(verify_sensor_token),
+) -> dict[str, str]:
+    upsert_location_alias(**payload.model_dump())
+    return {"status": "stored"}
+
+
+@app.post("/api/sensor/location-candidates")
+def api_sensor_location_candidate(
+    payload: SensorLocationCandidate,
+    _: None = Depends(verify_sensor_token),
+) -> dict[str, str]:
+    record_location_candidate(**payload.model_dump())
+    return {"status": "stored"}
+
+
+@app.get("/api/sensor/classification-terms")
+def api_sensor_classification_terms(
+    source_id: str,
+    rule_group: str | None = None,
+    _: None = Depends(verify_sensor_token),
+) -> list[dict[str, object]]:
+    return [dict(row) for row in list_classification_terms(source_id, rule_group=rule_group)]
+
+
+@app.get("/api/sensor/scheduler/jobs/{job_id}/control")
+def api_sensor_scheduler_control(
+    job_id: str,
+    _: None = Depends(verify_sensor_token),
+) -> dict[str, bool]:
+    return {"paused": scheduler_job_paused(job_id)}
+
+
+@app.post("/api/sensor/scheduler/jobs/{job_id}/control")
+def api_sensor_set_scheduler_control(
+    job_id: str,
+    payload: dict[str, bool],
+    _: None = Depends(verify_sensor_token),
+) -> dict[str, bool]:
+    paused = bool(payload.get("paused"))
+    set_scheduler_job_paused(job_id, paused)
+    return {"paused": paused}
+
+
+@app.get("/api/sensor/scheduler/jobs/{job_id}/status")
+def api_sensor_scheduler_status(
+    job_id: str,
+    _: None = Depends(verify_sensor_token),
+) -> dict[str, object]:
+    return get_scheduler_job_status(job_id) or {}
+
+
+@app.post("/api/sensor/scheduler/jobs/{job_id}/status")
+def api_sensor_set_scheduler_status(
+    job_id: str,
+    payload: SensorSchedulerStatus,
+    sensor_id: str = Depends(verify_sensor_token),
+) -> dict[str, str]:
+    set_scheduler_job_status(job_id=job_id, **payload.model_dump())
+    record_sensor_acquisition(
+        sensor_id=sensor_id,
+        acquisition_type="scheduler_status",
+        source_id=job_id,
+    )
+    return {"status": "stored"}
+
+
 @app.get("/api/events", response_model=list[Event])
 def api_list_events() -> list[Event]:
     return list_events()
@@ -223,6 +332,11 @@ async def api_reset_database() -> dict[str, str]:
 @app.get("/api/sources", response_model=list[Source])
 def api_list_sources() -> list[Source]:
     return list_sources()
+
+
+@app.get("/api/sensors", response_model=list[SensorStatus])
+def api_list_sensors() -> list[SensorStatus]:
+    return list_sensor_statuses()
 
 
 @app.get("/api/observations", response_model=list[RawObservation])
