@@ -587,6 +587,53 @@ def test_scheduler_staggers_initial_next_runs(tmp_path, monkeypatch):
     assert round((third - second).total_seconds()) == 7
 
 
+def test_scheduler_keeps_polling_after_job_failure(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
+    init_db()
+    calls = 0
+
+    scheduler = PollScheduler(enabled=True)
+
+    def handler() -> IngestResult:
+        return IngestResult(
+            source_id="source-a",
+            observations_seen=1,
+            observations_stored=1,
+            events_created=0,
+            events_updated=0,
+            message="ok",
+        )
+
+    job = PollJob("a", "source-a", "Source A", 600, handler)
+
+    async def fake_run_job(job: PollJob) -> IngestResult:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("temporary source failure")
+        return IngestResult(
+            source_id="source-a",
+            observations_seen=1,
+            observations_stored=1,
+            events_created=0,
+            events_updated=0,
+            message="ok",
+        )
+
+    async def run_scheduled_job_twice() -> tuple[IngestResult | None, IngestResult | None]:
+        scheduler._run_job = fake_run_job  # type: ignore[method-assign]
+        first_result = await scheduler._run_scheduled_job(job)
+        second_result = await scheduler._run_scheduled_job(job)
+        return first_result, second_result
+
+    first_result, second_result = asyncio.run(run_scheduled_job_twice())
+
+    assert calls == 2
+    assert first_result is None
+    assert second_result is not None
+    assert second_result.message == "ok"
+
+
 def test_health_sync_creates_health_event(tmp_path, monkeypatch):
     monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
     init_db()

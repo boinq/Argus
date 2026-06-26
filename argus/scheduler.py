@@ -122,8 +122,15 @@ class PollScheduler:
             if self.stop_event.is_set():
                 break
             job.next_run_at = None
-            await self._run_job(job)
+            await self._run_scheduled_job(job)
             await self._sleep_until_next_run(job, job.interval_seconds)
+
+    async def _run_scheduled_job(self, job: PollJob) -> IngestResult | None:
+        try:
+            return await self._run_job(job)
+        except Exception:
+            # Keep one source failure from killing its polling loop.
+            return None
 
     async def _run_job(self, job: PollJob) -> IngestResult:
         if job.running:
