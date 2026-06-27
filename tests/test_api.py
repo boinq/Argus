@@ -1380,9 +1380,89 @@ def test_odin_beredskab_location_uses_agency_name_as_fallback(tmp_path, monkeypa
     )
 
 
+def test_odin_beredskab_location_geocodes_and_caches_unknown_agency(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
+    init_db()
+    queries: list[str] = []
+
+    def fake_geocode(name: str) -> tuple[float, float] | None:
+        queries.append(name)
+        if name == "Beredskab 4K":
+            return (55.458, 12.182)
+        return None
+
+    monkeypatch.setattr("argus.ingest.odin.geocode_danish_place", fake_geocode)
+
+    assert beredskab_location("Beredskab 4K") == (55.458, 12.182)
+    assert get_location_alias("beredskab", "Beredskab 4K") == (55.458, 12.182)
+    assert queries == ["Beredskab 4K"]
+
+
+def test_odin_empty_station_geocodes_beredskab_4k_fallback(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
+    init_db()
+    monkeypatch.setattr("argus.ingest.odin.geocode_danish_place", lambda name: (55.458, 12.182))
+
+    location = incident_location(
+        {
+            "title": "Beredskab 4K",
+            "summary": "Førstemelding: Brandalarm Station:",
+            "station": "",
+        }
+    )
+
+    assert location == (55.458, 12.182)
+    assert get_location_alias("beredskab", "Beredskab 4K") == (55.458, 12.182)
+
+
+def test_odin_sync_learns_beredskab_fallback_from_station_incidents(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
+    init_db()
+
+    def fake_geocode(name: str) -> tuple[float, float] | None:
+        return (55.596, 12.249) if name in {"St. Greve", "St Greve", "Greve"} else None
+
+    monkeypatch.setattr("argus.ingest.odin.geocode_danish_place", fake_geocode)
+    monkeypatch.setattr(
+        "argus.ingest.odin.fetch_odin_incidents",
+        lambda limit: [
+            {
+                "id": "odin-incidents:station",
+                "title": "Beredskab 4K",
+                "summary": "Førstemelding: ISL-Forespørgsel Station: St. Greve",
+                "url": "http://www.odin.dk/112puls/",
+                "published_at": "2026-06-20T17:05:41+00:00",
+                "alarm_type": "ISL-Forespørgsel",
+                "station": "St. Greve",
+                "reported_at": "20-06-2026 19:05:41",
+            },
+            {
+                "id": "odin-incidents:empty-station",
+                "title": "Beredskab 4K",
+                "summary": "Førstemelding: Brandalarm Station:",
+                "url": "http://www.odin.dk/112puls/",
+                "published_at": "2026-06-20T17:06:41+00:00",
+                "alarm_type": "Brandalarm",
+                "station": "",
+                "reported_at": "20-06-2026 19:06:41",
+            },
+        ],
+    )
+
+    result = api_sync_odin()
+    events = api_list_events()
+    empty_station_event = next(event for event in events if "Brandalarm" in event.title)
+
+    assert result.events_created == 2
+    assert get_location_alias("beredskab", "Beredskab 4K") == (55.596, 12.249)
+    assert empty_station_event.latitude == 55.596
+    assert empty_station_event.longitude == 12.249
+
+
 def test_odin_unknown_locations_are_recorded_as_candidates(tmp_path, monkeypatch):
     monkeypatch.setenv("ARGUS_DB_PATH", str(tmp_path / "argus.db"))
     init_db()
+    monkeypatch.setattr("argus.ingest.odin.geocode_danish_place", lambda name: None)
 
     location = incident_location(
         {

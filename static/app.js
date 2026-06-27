@@ -118,6 +118,26 @@ let enabledLayerSources = new Set();
 let sourceRefreshTimer = null;
 let sourceCountdownTimer = null;
 let mlOverview = null;
+
+const EVENT_SOURCE_ALIASES = new Map([
+  ["dmi metobs", "dmi-metobs"],
+  ["dmi meteorological observations", "dmi-metobs"],
+  ["dr news", "dr-news"],
+  ["dr nyheder", "dr-news"],
+  ["danish maritime authority", "dma-news"],
+  ["danish maritime authority news", "dma-news"],
+  ["energi data service electricity prices", "energidataservice-elspot"],
+  ["energi data service electricity telemetry", "energidataservice-elspot"],
+  ["green power denmark elnet", "greenpowerdenmark-incidents"],
+  ["green power denmark elnet incidents", "greenpowerdenmark-incidents"],
+  ["niord nautical information", "niord-messages"],
+  ["odin beredskabsstyrelsen", "odin-incidents"],
+  ["police/ritzau short messages", "police-ritzau-short-messages"],
+  ["danish police via ritzau", "police-ritzau-short-messages"],
+  ["vejdirektoratet trafikinfo events", "trafikinfo-events"],
+  ["sundhedsstyrelsen", "health-alerts"],
+  ["danish health alerts", "health-alerts"],
+]);
 let mlCandidates = [];
 let mlTerms = [];
 let timelineValue = null;
@@ -289,7 +309,7 @@ function mapLayerEvents(items) {
   syncLayerSelections();
   return items.filter(
     (event) =>
-      enabledLayerCategories.has(event.category) && enabledLayerSources.has(event.source),
+      enabledLayerCategories.has(event.category) && enabledLayerSources.has(sourceKeyForEvent(event)),
   );
 }
 
@@ -305,8 +325,13 @@ function currentMapBaseEvents() {
 
 function syncLayerSelections() {
   const categories = [...new Set(events.map((event) => event.category))].sort();
-  const sourceNames = sources.map((source) => source.name);
-  const eventSources = [...new Set([...events.map((event) => event.source), ...sourceNames])].sort();
+  const sourceKeys = [
+    ...sources.map((source) => source.id),
+    ...events.map((event) => sourceKeyForEvent(event)),
+  ];
+  const eventSources = [...new Set(sourceKeys)].sort((a, b) =>
+    sourceLabelForKey(a).localeCompare(sourceLabelForKey(b)),
+  );
   categories.forEach((category) => {
     if (!knownLayerCategories.has(category)) {
       knownLayerCategories.add(category);
@@ -382,7 +407,9 @@ function renderLayerControls(visibleEventCount = markers.size) {
   }
   syncLayerSelections();
   const categories = [...knownLayerCategories].sort();
-  const eventSources = [...knownLayerSources].sort();
+  const eventSources = [...knownLayerSources].sort((a, b) =>
+    sourceLabelForKey(a).localeCompare(sourceLabelForKey(b)),
+  );
   const layerCountBase = currentEventPool();
   const observationCount = shouldShowObservationLayer() ? observationStations.length : 0;
   layerCount.textContent = `${visibleEventCount + observationCount} shown`;
@@ -402,12 +429,35 @@ function renderLayerControls(visibleEventCount = markers.size) {
       layerOption({
         kind: "source",
         value: source,
-        label: source,
+        label: sourceLabelForKey(source),
         checked: enabledLayerSources.has(source),
-        count: layerCountBase.filter((event) => event.source === source).length,
+        count: layerCountBase.filter((event) => sourceKeyForEvent(event) === source).length,
       }),
     )
     .join("");
+}
+
+function sourceKeyForEvent(event) {
+  const rawSource = String(event.source || "").trim();
+  const lowerSource = rawSource.toLowerCase();
+  const alias = EVENT_SOURCE_ALIASES.get(lowerSource);
+  if (alias) {
+    return alias;
+  }
+  const exact = sources.find((source) => source.id === rawSource || source.name === rawSource);
+  if (exact) {
+    return exact.id;
+  }
+  const fuzzy = sources.find((source) => {
+    const sourceName = source.name.toLowerCase();
+    return sourceName.includes(lowerSource) || lowerSource.includes(sourceName);
+  });
+  return fuzzy?.id || rawSource || "unknown";
+}
+
+function sourceLabelForKey(sourceKey) {
+  const source = sources.find((item) => item.id === sourceKey || item.name === sourceKey);
+  return source?.name || sourceKey;
 }
 
 function layerOption({ kind, value, label, checked, count }) {

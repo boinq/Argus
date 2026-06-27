@@ -49,6 +49,7 @@ def sync_odin(limit: int = 20) -> IngestResult:
     created = 0
     updated = 0
     delete_events_by_source(SOURCE_NAME)
+    prime_beredskab_locations(incidents)
     for incident in incidents:
         if insert_raw_article(
             article_id=incident["id"],
@@ -79,6 +80,25 @@ def sync_odin(limit: int = 20) -> IngestResult:
         events_updated=updated,
         message="ODIN 1-1-2 pulse synced.",
     )
+
+
+def prime_beredskab_locations(incidents: list[dict[str, Any]]) -> None:
+    for incident in incidents:
+        beredskab = str(incident.get("title") or "")
+        if not beredskab or beredskab_location(beredskab) is not None:
+            continue
+        station = str(incident.get("station") or "")
+        location = station_location(station)
+        if location is None:
+            continue
+        latitude, longitude = location
+        upsert_location_alias(
+            kind="beredskab",
+            name=beredskab,
+            latitude=latitude,
+            longitude=longitude,
+            source="learned",
+        )
 
 
 def fetch_odin_incidents(limit: int) -> list[dict[str, Any]]:
@@ -219,7 +239,7 @@ def incident_location(incident: dict[str, Any]) -> tuple[float, float] | None:
 
     beredskab = str(incident.get("title") or "")
     beredskab_normalized = normalize_beredskab_name(beredskab)
-    location = resolve_location(beredskab_normalized, kinds=("beredskab",))
+    location = beredskab_location(beredskab)
     if location is not None:
         return location
 
@@ -238,10 +258,41 @@ def beredskab_location(name: str) -> tuple[float, float] | None:
     normalized = normalize_beredskab_name(name)
     if not normalized:
         return None
-    return (
-        resolve_location(normalized, kinds=("beredskab",))
-        or station_location(name)
+    location = resolve_location(normalized, kinds=("beredskab",))
+    if location is not None:
+        return location
+    location = geocode_beredskab_name(name, normalized)
+    if location is None:
+        return None
+    latitude, longitude = location
+    upsert_location_alias(
+        kind="beredskab",
+        name=name,
+        latitude=latitude,
+        longitude=longitude,
+        source="learned",
     )
+    return location
+
+
+def geocode_beredskab_name(name: str, normalized: str) -> tuple[float, float] | None:
+    for query in beredskab_geocode_queries(name, normalized):
+        location = geocode_danish_place(query)
+        if location is not None:
+            return location
+    return None
+
+
+def beredskab_geocode_queries(name: str, normalized: str) -> list[str]:
+    queries: list[str] = []
+    for value in (name, normalized):
+        cleaned = " ".join(value.split())
+        if cleaned and cleaned not in queries:
+            queries.append(cleaned)
+        expanded = re.sub(r"\b4k\b", "Greve Køge Lejre Roskilde", cleaned, flags=re.IGNORECASE)
+        if expanded and expanded not in queries:
+            queries.append(expanded)
+    return queries
 
 
 def resolve_location(
